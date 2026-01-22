@@ -1,5 +1,6 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
+using System;
 using Meta.XR.Samples;
 using UnityEngine;
 using Node = UnityEngine.XR.XRNode;
@@ -27,8 +28,24 @@ namespace NorthStar
             OVRPlugin.useDynamicFoveatedRendering = DynamicFoveatedRendering;
             OVRPlugin.foveatedRenderingLevel = FoveatedRenderingLevel;
         }
+        
+        private void Start()
+        {
+            UpdatePose();
+            Application.onBeforeRender += UpdatePose;
+        }
+        
+        protected virtual void OnDestroy()
+        {
+            Application.onBeforeRender -= UpdatePose;
+        }
 
         private void Update()
+        {
+            UpdatePose();
+        }
+
+        private void UpdatePose()
         {
             if (!UpdatePosition)
                 return;
