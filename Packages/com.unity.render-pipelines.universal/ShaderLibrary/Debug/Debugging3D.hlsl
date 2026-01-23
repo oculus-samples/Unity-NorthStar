@@ -13,20 +13,38 @@
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/SurfaceData.hlsl"
 
-#define SETUP_DEBUG_TEXTURE_DATA(inputData, uv, texture)    SetupDebugDataTexture(inputData, uv, texture##_TexelSize, texture##_MipInfo, GetMipCount(TEXTURE2D_ARGS(texture, sampler##texture)))
+#define TERRAIN_STREAM_INFO float4(0.0f, 0.0f, float(6 | (4 << 4)), 0.0f) // 0-15 are reserved for per-texture codes (use "6" to indicate terrain); per-material code "4" signifies "warnings/issues"
+#define SETUP_DEBUG_TEXTURE_DATA(inputData, uv)                   SetupDebugDataTexture(inputData, TRANSFORM_TEX(uv.xy, unity_MipmapStreaming_DebugTex), unity_MipmapStreaming_DebugTex_TexelSize, unity_MipmapStreaming_DebugTex_MipInfo, unity_MipmapStreaming_DebugTex_StreamInfo, unity_MipmapStreaming_DebugTex)
+#define SETUP_DEBUG_TEXTURE_DATA_NO_UV(inputData)                 SetupDebugDataTexture(inputData, float2(0.0f, 0.0f), unity_MipmapStreaming_DebugTex_TexelSize, unity_MipmapStreaming_DebugTex_MipInfo, unity_MipmapStreaming_DebugTex_StreamInfo, unity_MipmapStreaming_DebugTex)
+#define SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, uv, texture)  SetupDebugDataTexture(inputData, uv, texture##_TexelSize, texture##_MipInfo, texture##_StreamInfo, texture)
+#define SETUP_DEBUG_TEXTURE_DATA_FOR_TERRAIN(inputData)           SetupDebugDataTerrain(inputData)
 
-void SetupDebugDataTexture(inout InputData inputData, float2 uv, float4 texelSize, float4 mipInfo, uint mipCount)
+void SetupDebugDataTexture(inout InputData inputData, float2 uv, float4 texelSize, float4 mipInfo, float4 streamInfo, TEXTURE2D(tex))
 {
     inputData.uv = uv;
     inputData.texelSize = texelSize;
     inputData.mipInfo = mipInfo;
-    inputData.mipCount = mipCount;
+    inputData.streamInfo = streamInfo;
+    inputData.mipCount = GetMipCount(TEXTURE2D_ARGS(tex, sampler_PointClamp));
+    inputData.originalColor = 0.0f;
+
+    if (_DebugMipInfoMode != DEBUGMIPINFOMODE_NONE)
+    {
+        inputData.originalColor = SAMPLE_TEXTURE2D(tex, sampler_LinearRepeat, uv).xyz;
+    }
 }
 
 void SetupDebugDataBrdf(inout InputData inputData, half3 brdfDiffuse, half3 brdfSpecular)
 {
     inputData.brdfDiffuse = brdfDiffuse;
     inputData.brdfSpecular = brdfSpecular;
+}
+
+void SetupDebugDataTerrain(inout InputData inputData)
+{
+    // TERRAIN_STREAM_INFO: no streamInfo will have been set (no MeshRenderer); set status to "6" to reflect in the debug status that this is a terrain
+    // also, set the per-material status to "4" to indicate warnings
+    inputData.streamInfo = TERRAIN_STREAM_INFO;
 }
 
 bool UpdateSurfaceAndInputDataForDebug(inout SurfaceData surfaceData, inout InputData inputData)
@@ -113,6 +131,27 @@ bool CalculateValidationColorForDebug(in InputData inputData, in SurfaceData sur
     }
 }
 
+float3 GetRenderingLayerMasksDebugColor(float4 positionCS, float3 normalWS)
+{
+    uint stripeSize = 8;
+    int renderingLayers = GetMeshRenderingLayer() & _DebugRenderingLayerMask;
+    uint layerId = 0, layerCount = countbits(renderingLayers);
+    float4 debugColor = float4(1, 1, 1, 1);
+    for (uint i = 0; (i < 32) && (layerId < layerCount); i++)
+    {
+        if (renderingLayers & (1U << i))
+        {
+            uint t = (positionCS.y / stripeSize) % layerCount;
+            if (t == layerId)
+                debugColor.rgb = _DebugRenderingLayerMaskColors[i].rgb;
+            layerId++;
+        }
+    }
+    float shading = saturate(dot(normalWS, TransformViewToWorldDir(float3(0.0f, 0.0f, 1.0f), true)));
+    shading = Remap(0.0f, 1.0f, 0.6, 1.0f, shading);
+    return shading * debugColor.xyz;
+}
+
 bool CalculateColorForDebugMaterial(in InputData inputData, in SurfaceData surfaceData, inout half4 debugColor)
 {
     // Debug materials...
@@ -157,14 +196,27 @@ bool CalculateColorForDebugMaterial(in InputData inputData, in SurfaceData surfa
             debugColor = half4(surfaceData.metallic.rrr, 1);
             return true;
 
+        case DEBUGMATERIALMODE_RENDERING_LAYER_MASKS:
+            debugColor.xyz = GetRenderingLayerMasksDebugColor(inputData.positionCS, inputData.normalWS).xyz;
+            return true;
+
         default:
             return TryGetDebugColorInvalidMode(debugColor);
     }
 }
 
+bool CalculateColorForDebugMipmapStreaming(in InputData inputData, in SurfaceData surfaceData, inout half4 debugColor)
+{
+    return CalculateColorForDebugMipmapStreaming(inputData.mipCount, inputData.positionCS.xy, inputData.texelSize, inputData.uv, inputData.mipInfo, inputData.streamInfo, inputData.originalColor, debugColor);
+}
+
 bool CalculateColorForDebug(in InputData inputData, in SurfaceData surfaceData, inout half4 debugColor)
 {
     if (CalculateColorForDebugSceneOverride(debugColor))
+    {
+        return true;
+    }
+    else if (CalculateColorForDebugMipmapStreaming(inputData, surfaceData, debugColor))
     {
         return true;
     }
@@ -241,6 +293,11 @@ bool CanDebugOverrideOutputColor(inout InputData inputData, inout SurfaceData su
         debugColor = CalculateDebugLightingComplexityColor(inputData, surfaceData);
         return true;
     }
+    else if (_DebugLightingMode == DEBUGLIGHTINGMODE_GLOBAL_ILLUMINATION)
+    {
+        debugColor = half4(inputData.bakedGI, surfaceData.alpha);
+        return true;
+    }
     else
     {
         debugColor = half4(0, 0, 0, 1);
@@ -256,6 +313,14 @@ bool CanDebugOverrideOutputColor(inout InputData inputData, inout SurfaceData su
                 // If we've modified any data we'll need to re-sample the GI to ensure that everything works correctly...
                 #if defined(DYNAMICLIGHTMAP_ON)
                 inputData.bakedGI = SAMPLE_GI(inputData.staticLightmapUV, inputData.dynamicLightmapUV.xy, inputData.vertexSH, inputData.normalWS);
+                #elif !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+                inputData.bakedGI = SAMPLE_GI(inputData.vertexSH,
+                    GetAbsolutePositionWS(inputData.positionWS),
+                    inputData.normalWS,
+                    inputData.viewDirectionWS,
+                    inputData.positionCS.xy,
+                    inputData.probeOcclusion,
+                    inputData.shadowMask);
                 #else
                 inputData.bakedGI = SAMPLE_GI(inputData.staticLightmapUV, inputData.vertexSH, inputData.normalWS);
                 #endif
@@ -276,6 +341,11 @@ bool CanDebugOverrideOutputColor(inout InputData inputData, inout SurfaceData su
         debugColor = CalculateDebugLightingComplexityColor(inputData, surfaceData);
         return true;
     }
+    else if (_DebugLightingMode == DEBUGLIGHTINGMODE_GLOBAL_ILLUMINATION)
+    {
+        debugColor = half4(inputData.bakedGI, surfaceData.alpha);
+        return true;
+    }
     else
     {
         if (_DebugLightingMode == DEBUGLIGHTINGMODE_SHADOW_CASCADES)
@@ -289,6 +359,14 @@ bool CanDebugOverrideOutputColor(inout InputData inputData, inout SurfaceData su
                 // If we've modified any data we'll need to re-sample the GI to ensure that everything works correctly...
                 #if defined(DYNAMICLIGHTMAP_ON)
                 inputData.bakedGI = SAMPLE_GI(inputData.staticLightmapUV, inputData.dynamicLightmapUV.xy, inputData.vertexSH, inputData.normalWS);
+                #elif !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+                inputData.bakedGI = SAMPLE_GI(inputData.vertexSH,
+                    GetAbsolutePositionWS(inputData.positionWS),
+                    inputData.normalWS,
+                    inputData.viewDirectionWS,
+                    inputData.positionCS.xy,
+                    inputData.probeOcclusion,
+                    inputData.shadowMask);
                 #else
                 inputData.bakedGI = SAMPLE_GI(inputData.staticLightmapUV, inputData.vertexSH, inputData.normalWS);
                 #endif
@@ -302,7 +380,10 @@ bool CanDebugOverrideOutputColor(inout InputData inputData, inout SurfaceData su
 #else
 
 // When "DEBUG_DISPLAY" isn't defined this macro does nothing - there's no debug-data to set-up...
-#define SETUP_DEBUG_TEXTURE_DATA(inputData, uv, texture)
+#define SETUP_DEBUG_TEXTURE_DATA(inputData, uv)
+#define SETUP_DEBUG_TEXTURE_DATA_NO_UV(inputData)
+#define SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, uv, texture)
+#define SETUP_DEBUG_TEXTURE_DATA_FOR_TERRAIN(inputData)
 
 #endif
 

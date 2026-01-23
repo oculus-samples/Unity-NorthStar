@@ -2,6 +2,7 @@
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityGBuffer.hlsl"
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/DebugMipmapStreamingMacros.hlsl"
 
 struct Attributes
 {
@@ -24,6 +25,9 @@ struct Varyings
     #endif
     half4   NormalWS        : TEXCOORD5;
     float3  PositionWS      : TEXCOORD6;
+    #ifdef USE_APV_PROBE_OCCLUSION
+    float4 probeOcclusion   : TEXCOORD7;
+    #endif
     float4  PositionCS      : SV_POSITION; // Clip Position
 
     UNITY_VERTEX_INPUT_INSTANCE_ID
@@ -48,13 +52,27 @@ void InitializeInputData(Varyings input, out InputData inputData)
 
     inputData.fogCoord = input.LightingFog.a;
     inputData.vertexLighting = input.LightingFog.rgb;
-    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.vertexSH, input.NormalWS.xyz);
     inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.PositionCS);
-    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
     inputData.positionWS = input.PositionWS;
+
+#if !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    inputData.bakedGI = SAMPLE_GI(input.vertexSH,
+        GetAbsolutePositionWS(inputData.positionWS),
+        input.NormalWS.xyz,
+        GetWorldSpaceNormalizeViewDir(inputData.positionWS),
+        inputData.positionCS.xy,
+        input.probeOcclusion,
+        inputData.shadowMask);
+#else
+    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.vertexSH, input.NormalWS.xyz);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.staticLightmapUV);
+#endif
 
     #if defined(DEBUG_DISPLAY)
     inputData.uv = input.UV01;
+    #if defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;
+    #endif
     #endif
 }
 
@@ -131,7 +149,7 @@ Varyings TerrainLitVertex(Attributes input)
 
     // Vertex Lighting
     half3 NormalWS = input.NormalOS;
-    OUTPUT_SH(NormalWS, output.vertexSH);
+    OUTPUT_SH4(vertexInput.positionWS, NormalWS.xyz, GetWorldSpaceNormalizeViewDir(vertexInput.positionWS), output.vertexSH, output.probeOcclusion);
     Light mainLight = GetMainLight();
     half3 attenuatedLightColor = mainLight.color * mainLight.distanceAttenuation;
     half3 diffuseColor = half3(0, 0, 0);
@@ -141,7 +159,8 @@ Varyings TerrainLitVertex(Attributes input)
         diffuseColor += LightingLambert(attenuatedLightColor, mainLight.direction, NormalWS);
     }
 
-    #if defined(_ADDITIONAL_LIGHTS) || defined(_ADDITIONAL_LIGHTS_VERTEX)
+    // Adding !defined(USE_CLUSTER_LIGHT_LOOP): in Forward+ we can't possibly get the light list in a vertex shader.
+    #if (defined(_ADDITIONAL_LIGHTS) || defined(_ADDITIONAL_LIGHTS_VERTEX)) && !USE_FORWARD_PLUS
     if (IsLightingFeatureEnabled(DEBUGLIGHTINGFEATUREFLAGS_ADDITIONAL_LIGHTS))
     {
         int pixelLightCount = GetAdditionalLightsCount();
@@ -171,6 +190,7 @@ half4 TerrainLitForwardFragment(Varyings input) : SV_Target
 
     InputData inputData;
     InitializeInputData(input, inputData);
+    SETUP_DEBUG_TEXTURE_DATA_FOR_TERRAIN(inputData);
     half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.UV01);
     half4 color = UniversalTerrainLit(inputData, tex.rgb, tex.a);
 
@@ -186,6 +206,7 @@ FragmentOutput TerrainLitGBufferFragment(Varyings input)
     half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.UV01);
     InputData inputData;
     InitializeInputData(input, inputData);
+    SETUP_DEBUG_TEXTURE_DATA_FOR_TERRAIN(inputData);
     SurfaceData surfaceData;
     InitializeSurfaceData(tex.rgb, tex.a, surfaceData);
     half4 color = UniversalTerrainLit(inputData, tex.rgb, tex.a);

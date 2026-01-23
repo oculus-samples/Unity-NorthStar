@@ -23,11 +23,6 @@ float4 VFXApplyPreExposure(float4 color, VFX_VARYING_PS_INPUTS input)
 }
 #endif
 
-float4 VFXTransformFinalColor(float4 color)
-{
-    return color;
-}
-
 float2 VFXGetNormalizedScreenSpaceUV(float4 clipPos)
 {
     return GetNormalizedScreenSpaceUV(clipPos);
@@ -35,8 +30,27 @@ float2 VFXGetNormalizedScreenSpaceUV(float4 clipPos)
 
 void VFXEncodeMotionVector(float2 velocity, out float4 outBuffer)
 {
-    //TODO : LWRP doesn't support motion vector & TAA yet
-    outBuffer = (float4)0.0f;
+    outBuffer = float4(velocity.xy, 0, 0);
+}
+
+float4x4 VFXGetObjectToWorldMatrix()
+{
+    // NOTE: If using the new generation path, explicitly call the object matrix (since the particle matrix is now baked into UNITY_MATRIX_M)
+    #if defined(HAVE_VFX_MODIFICATION) && !defined(SHADER_STAGE_COMPUTE)
+    return GetSGVFXUnityObjectToWorld();
+    #else
+    return GetObjectToWorldMatrix();
+    #endif
+}
+
+float4x4 VFXGetWorldToObjectMatrix()
+{
+    // NOTE: If using the new generation path, explicitly call the object matrix (since the particle matrix is now baked into UNITY_MATRIX_I_M)
+    #if defined(HAVE_VFX_MODIFICATION) && !defined(SHADER_STAGE_COMPUTE)
+    return GetSGVFXUnityWorldToObject();
+    #else
+    return GetWorldToObjectMatrix();
+    #endif
 }
 
 float4 VFXTransformPositionWorldToClip(float3 posWS)
@@ -46,32 +60,35 @@ float4 VFXTransformPositionWorldToClip(float3 posWS)
 
 float4 VFXTransformPositionWorldToNonJitteredClip(float3 posWS)
 {
-    //TODO : LWRP doesn't support motion vector & TAA yet
-    return VFXTransformPositionWorldToClip(posWS);
+    return mul(_NonJitteredViewProjMatrix, float4(posWS, 1.0f));
 }
 
 float4 VFXTransformPositionWorldToPreviousClip(float3 posWS)
 {
-    //TODO : LWRP doesn't support motion vector & TAA yet
-    return VFXTransformPositionWorldToClip(posWS);
+    return mul(_PrevViewProjMatrix, float4(posWS, 1.0f));
 }
 
 float4 VFXTransformPositionObjectToClip(float3 posOS)
 {
-    float3 posWS = TransformObjectToWorld(posOS);
+    float3 posWS = mul(VFXGetObjectToWorldMatrix(), float4(posOS,1)).xyz;
     return VFXTransformPositionWorldToClip(posWS);
 }
 
 float4 VFXTransformPositionObjectToNonJitteredClip(float3 posOS)
 {
-    //TODO : LWRP doesn't support motion vector & TAA yet
-    return VFXTransformPositionObjectToClip(posOS);
+    float3 posWS = mul(VFXGetObjectToWorldMatrix(), float4(posOS,1)).xyz;
+    return VFXTransformPositionWorldToNonJitteredClip(posWS);
+}
+
+float3 VFXTransformPreviousObjectToWorld(float3 posOS)
+{
+    return mul(GetPrevObjectToWorldMatrix(), float4(posOS, 1.0)).xyz;
 }
 
 float4 VFXTransformPositionObjectToPreviousClip(float3 posOS)
 {
-    //TODO : LWRP doesn't support motion vector & TAA yet
-    return VFXTransformPositionObjectToClip(posOS);
+    float3 posWS = VFXTransformPreviousObjectToWorld(posOS);
+    return VFXTransformPositionWorldToPreviousClip(posWS);
 }
 
 float3 VFXTransformPositionWorldToView(float3 posWS)
@@ -98,26 +115,6 @@ float4x4 ApplyCameraTranslationToInverseMatrix(float4x4 inverseModelMatrix)
 }
 //End of compatibility functions
 
-float4x4 VFXGetObjectToWorldMatrix()
-{
-    // NOTE: If using the new generation path, explicitly call the object matrix (since the particle matrix is now baked into UNITY_MATRIX_M)
-#if defined(HAVE_VFX_MODIFICATION) && !defined(SHADER_STAGE_COMPUTE)
-    return GetSGVFXUnityObjectToWorld();
-#else
-    return GetObjectToWorldMatrix();
-#endif
-}
-
-float4x4 VFXGetWorldToObjectMatrix()
-{
-    // NOTE: If using the new generation path, explicitly call the object matrix (since the particle matrix is now baked into UNITY_MATRIX_I_M)
-#if defined(HAVE_VFX_MODIFICATION) && !defined(SHADER_STAGE_COMPUTE)
-    return GetSGVFXUnityWorldToObject();
-#else
-    return GetWorldToObjectMatrix();
-#endif
-}
-
 float3x3 VFXGetWorldToViewRotMatrix()
 {
     return (float3x3)GetWorldToViewMatrix();
@@ -136,7 +133,12 @@ float4x4 VFXGetViewToWorldMatrix()
 #ifdef USING_STEREO_MATRICES
 float3 GetWorldStereoOffset()
 {
-    return float3(0.0f, 0.0f, 0.0f);
+    return unity_StereoWorldSpaceCameraPos[0].xyz - unity_StereoWorldSpaceCameraPos[1].xyz;
+}
+
+float4x4 GetNonJitteredViewProjMatrix(int eye)
+{
+    return _NonJitteredViewProjMatrixStereo[eye];
 }
 #endif
 
@@ -174,6 +176,17 @@ float4 VFXApplyAO(float4 color, float4 posCS)
     return color;
 }
 
+float4 VFXTransformFinalColor(float4 color, float4 posCS)
+{
+    if (IsOnlyAOLightingFeatureEnabled())
+    {
+        color.rgb = (float3)1.0f;
+        color = VFXApplyAO(color, posCS);
+    }
+
+    return color;
+}
+
 float4 VFXApplyFog(float4 color,float4 posCS,float3 posWS)
 {
    float4 fog = (float4)0;
@@ -200,9 +213,9 @@ float3 VFXGetCameraWorldDirection()
 #if defined(_GBUFFER_NORMALS_OCT)
 #define VFXComputePixelOutputToNormalBuffer(i,normalWS,uvData,outNormalBuffer) \
 { \
-    float2 octNormalWS = PackNormalOctQuadEncode(normalWS); \          // values between [-1, +1], must use fp32 on some platforms
-    float2 remappedOctNormalWS = saturate(octNormalWS * 0.5 + 0.5); \  // values between [ 0,  1]
-    half3 packedNormalWS = PackFloat2To888(remappedOctNormalWS); \     // values between [ 0,  1]
+    float2 octNormalWS = PackNormalOctQuadEncode(normalWS);         /*values between [-1, +1], must use fp32 on some platforms*/ \
+    float2 remappedOctNormalWS = saturate(octNormalWS * 0.5 + 0.5); /*values between [ 0,  1]*/ \
+    half3 packedNormalWS = PackFloat2To888(remappedOctNormalWS);    /*values between [ 0,  1]*/ \
 	outNormalBuffer = float4(packedNormalWS, 0.0); \
 }
 #else

@@ -51,7 +51,7 @@ namespace UnityEditor.Rendering.Universal
         ScreenSpaceOcclusionAfterOpaque = (1L << 28),
         AdditionalLightsKeepOffVariants = (1L << 29),
         ShadowsKeepOffVariants = (1L << 30),
-        // Unused = (1L << 31),
+        UseLegacyLightmaps = (1L << 31),
         DecalLayers = (1L << 32),
         OpaqueWriteRenderingLayers = (1L << 33),
         GBufferWriteRenderingLayers = (1L << 34),
@@ -64,7 +64,17 @@ namespace UnityEditor.Rendering.Universal
         AutoSHMode = (1L << 41),
         AutoSHModePerVertex = (1L << 42),
         ExplicitSHMode = (1L << 43),
-        ReflectionProbeAtlas = (1L << 44),
+        DataDrivenLensFlare = (1L << 44),
+        ScreenSpaceLensFlare = (1L << 45),
+        SoftShadowsLow = (1L << 46),
+        SoftShadowsMedium = (1L << 47),
+        SoftShadowsHigh = (1L << 48),
+        AlphaOutput = (1L << 49),
+        // META CHANGE START: Added Reflection Probe Atlas feature for VR performance
+        ReflectionProbeAtlas = (1L << 50),
+        // META CHANGE END
+
+        All = ~0
     }
 
     [Flags]
@@ -73,15 +83,36 @@ namespace UnityEditor.Rendering.Universal
         None = 0,
         Calculated = (1 << 0),
         LensDistortion = (1 << 1),
-        Bloom = (1 << 2),
+        //2: Unused for now
         ChromaticAberration = (1 << 3),
         ToneMapping = (1 << 4),
         FilmGrain = (1 << 5),
         DepthOfField = (1 << 6),
         CameraMotionBlur = (1 << 7),
         PaniniProjection = (1 << 8),
+        BloomLQ     = (1 << 9),
+        BloomLQDirt = (1 << 10),
+        BloomHQ     = (1 << 11),
+        BloomHQDirt = (1 << 12),
+        All = ~0
     }
 
+
+    /// <summary>
+    /// This class is used solely to make sure Shader Prefiltering data inside the
+    /// URP Assets get updated before anything (Like Asset Bundles) are built.
+    /// </summary>
+    class UpdateShaderPrefilteringDataBeforeBuild : IPreprocessShaders
+    {
+        public int callbackOrder => -100;
+
+        public UpdateShaderPrefilteringDataBeforeBuild()
+        {
+            ShaderBuildPreprocessor.GatherShaderFeatures(Debug.isDebugBuild);
+        }
+
+		public void OnProcessShader(Shader shader, ShaderSnippetData snippetData, IList<ShaderCompilerData> compilerDataList){}
+    }
 
     /// <summary>
     /// Preprocess Build class used to determine the shader features used in the project.
@@ -96,6 +127,8 @@ namespace UnityEditor.Rendering.Universal
         public static bool s_StripUnusedPostProcessingVariants;
         public static bool s_StripScreenCoordOverrideVariants;
         public static bool s_Strip2DPasses;
+        public static bool s_UseSoftShadowQualityLevelKeywords;
+        public static bool s_StripXRVariants;
 
         public static List<ShaderFeatures> supportedFeaturesList
         {
@@ -115,31 +148,35 @@ namespace UnityEditor.Rendering.Universal
             {
                 // This can happen for example when building AssetBundles.
                 if (s_VolumeFeatures == VolumeFeatures.None)
-                    GetSupportedFeaturesFromVolumes();
+                    GetSupportedFeaturesFromVolumes(ref s_VolumeFeatures);
 
                 return s_VolumeFeatures;
             }
         }
 
         // Private
-        private static bool s_StripXRVariants;
         private static bool s_KeepOffVariantForAdditionalLights;
         private static bool s_UseSHPerVertexForSHAuto;
         private static VolumeFeatures s_VolumeFeatures;
         private static List<ShaderFeatures> s_SupportedFeaturesList = new();
 
-        // Helper calss to detect XR build targets at build time.
-        internal sealed class XRPlatformBuildTimeDetect
+        // Helper class to detect XR build targets at build time.
+        internal sealed class PlatformBuildTimeDetect
         {
-            private static XRPlatformBuildTimeDetect xrPlatformInfo;
+            private static PlatformBuildTimeDetect s_PlatformInfo;
             internal bool isStandaloneXR { get; private set; }
             internal bool isHololens { get; private set; }
             internal bool isQuest { get; private set; }
+            internal bool isSwitch { get; private set; }
+            internal bool isSwitch2 { get; private set; }
 
-            private XRPlatformBuildTimeDetect()
+            private PlatformBuildTimeDetect()
             {
+                BuildTargetGroup buildTargetGroup = BuildPipeline.GetBuildTargetGroup(EditorUserBuildSettings.activeBuildTarget);
+                isSwitch = buildTargetGroup == BuildTargetGroup.Switch;
+                isSwitch2 = buildTargetGroup == BuildTargetGroup.Switch2;
+
 #if XR_MANAGEMENT_4_0_1_OR_NEWER
-                var buildTargetGroup = BuildPipeline.GetBuildTargetGroup(EditorUserBuildSettings.activeBuildTarget);
                 var buildTargetSettings = XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(buildTargetGroup);
                 if (buildTargetSettings != null && buildTargetSettings.AssignedSettings != null && buildTargetSettings.AssignedSettings.activeLoaders.Count > 0)
                 {
@@ -150,17 +187,17 @@ namespace UnityEditor.Rendering.Universal
 #endif
             }
 
-            internal static XRPlatformBuildTimeDetect GetInstance()
+            internal static PlatformBuildTimeDetect GetInstance()
             {
-                if (xrPlatformInfo == null)
-                    xrPlatformInfo = new XRPlatformBuildTimeDetect();
+                if (s_PlatformInfo == null)
+                    s_PlatformInfo = new PlatformBuildTimeDetect();
 
-                return xrPlatformInfo;
+                return s_PlatformInfo;
             }
 
             internal static void ClearInstance()
             {
-                xrPlatformInfo = null;
+                s_PlatformInfo = null;
             }
         }
 
@@ -168,11 +205,11 @@ namespace UnityEditor.Rendering.Universal
         {
             public int msaaSampleCount;
             public bool isUniversalRenderer;
-            public bool needsUnusedVariants;
             public bool needsProcedural;
             public bool needsMainLightShadows;
             public bool needsAdditionalLightShadows;
             public bool needsSoftShadows;
+            public bool needsSoftShadowsQualityLevels;
             public bool needsShadowsOff;
             public bool needsAdditionalLightsOff;
             public bool needsGBufferRenderingLayers;
@@ -180,7 +217,9 @@ namespace UnityEditor.Rendering.Universal
             public bool needsRenderPass;
             public bool needsReflectionProbeBlending;
             public bool needsReflectionProbeBoxProjection;
+            // META CHANGE START: Added Reflection Probe Atlas requirement for VR performance
             public bool needsReflectionProbeAtlas;
+            // META CHANGE END
             public bool needsSHVertexForSHAuto;
             public RenderingMode renderingMode;
         }
@@ -201,10 +240,7 @@ namespace UnityEditor.Rendering.Universal
         // Called after the build has finished...
         public void OnPostprocessBuild(BuildReport report)
         {
-            // SaveAssets() is called here to update the Prefiltering Serialized variables inside the URP Assets.
-            AssetDatabase.SaveAssets();
-
-            XRPlatformBuildTimeDetect.ClearInstance();
+            PlatformBuildTimeDetect.ClearInstance();
 #if PROFILE_BUILD
             Profiler.enabled = false;
 #endif
@@ -212,74 +248,81 @@ namespace UnityEditor.Rendering.Universal
 
         // Gathers all the shader features and updates the prefiltering
         // settings for all URP Assets in the quality settings
-        private static void GatherShaderFeatures(bool isDevelopmentBuild)
+        internal static void GatherShaderFeatures(bool isDevelopmentBuild)
         {
-            GetGlobalAndPlatformSettings(isDevelopmentBuild);
-            GetSupportedFeaturesFromVolumes();
-
-            s_Strip2DPasses = true;
             s_SupportedFeaturesList.Clear();
-            using (ListPool<UniversalRenderPipelineAsset>.Get(out List<UniversalRenderPipelineAsset> urpAssets))
-            {
-                bool success = EditorUserBuildSettings.activeBuildTarget.TryGetRenderPipelineAssets(urpAssets);
-                if (!success)
-                {
-                    Debug.LogError("Unable to get UniversalRenderPipelineAssets from EditorUserBuildSettings.activeBuildTarget.");
-                    return;
-                }
+            GetGlobalAndPlatformSettings(isDevelopmentBuild);
 
-                // Get Supported features & update data used for Shader Prefiltering and Scriptable Stripping
-                GetSupportedShaderFeaturesFromAssets(ref urpAssets, ref s_SupportedFeaturesList, s_StripUnusedVariants);
-            }
+            // If stripping of unused volume features is disabled, the s_VolumeFeatures
+            // variable is set to include every keyword used by volumes shaders.
+            // Otherwise it tries to gather all the volume features used in the project.
+            if (s_StripUnusedPostProcessingVariants)
+                GetSupportedFeaturesFromVolumes(ref s_VolumeFeatures);
+            else
+                GetEveryVolumeFeatures(ref s_VolumeFeatures);
+
+            // If stripping of unused shader variants is disabled, the s_SupportedFeaturesList
+            // list is set to include one item containing every keyword used by URP.
+            // Otherwise it tries to gather all the shader features used in the project.
+            if (s_StripUnusedVariants)
+                HandleEnabledShaderStripping();
+            else
+                GetEveryShaderFeatureAndUpdateURPAssets(s_SupportedFeaturesList);
         }
 
         // Retrieves the global and platform settings used in the project...
         private static void GetGlobalAndPlatformSettings(bool isDevelopmentBuild)
         {
-            UniversalRenderPipelineGlobalSettings globalSettings = UniversalRenderPipelineGlobalSettings.instance;
-            if (globalSettings)
-            {
-                s_StripUnusedPostProcessingVariants = globalSettings.stripUnusedPostProcessingVariants;
-                s_StripDebugDisplayShaders = !isDevelopmentBuild || globalSettings.stripDebugVariants;
-                s_StripUnusedVariants = globalSettings.stripUnusedVariants;
-                s_StripScreenCoordOverrideVariants = globalSettings.stripScreenCoordOverrideVariants;
-            }
+            if (GraphicsSettings.TryGetRenderPipelineSettings<ShaderStrippingSetting>(out var shaderStrippingSettings))
+                s_StripDebugDisplayShaders = !isDevelopmentBuild || shaderStrippingSettings.stripRuntimeDebugShaders;
             else
-            {
                 s_StripDebugDisplayShaders = true;
+
+            if (GraphicsSettings.TryGetRenderPipelineSettings<URPShaderStrippingSetting>(out var urpShaderStrippingSettings))
+            {
+                s_StripUnusedPostProcessingVariants = urpShaderStrippingSettings.stripUnusedPostProcessingVariants;
+                s_StripUnusedVariants               = urpShaderStrippingSettings.stripUnusedVariants;
+                s_StripScreenCoordOverrideVariants  = urpShaderStrippingSettings.stripScreenCoordOverrideVariants;
             }
 
-            #if XR_MANAGEMENT_4_0_1_OR_NEWER
+            PlatformBuildTimeDetect platformBuildTimeDetect = PlatformBuildTimeDetect.GetInstance();
+            bool isShaderAPIMobileDefined = GraphicsSettings.HasShaderDefine(BuiltinShaderDefine.SHADER_API_MOBILE);
+            if (platformBuildTimeDetect.isSwitch || platformBuildTimeDetect.isSwitch2 || isShaderAPIMobileDefined)
+                s_UseSHPerVertexForSHAuto = true;
+
             // XR Stripping
-            XRGeneralSettings generalSettings = XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(BuildPipeline.GetBuildTargetGroup(EditorUserBuildSettings.activeBuildTarget));
-            s_StripXRVariants = generalSettings == null || generalSettings.Manager == null || generalSettings.Manager.activeLoaders.Count <= 0;
+            #if XR_MANAGEMENT_4_0_1_OR_NEWER
+                BuildTargetGroup buildTargetGroup = BuildPipeline.GetBuildTargetGroup(EditorUserBuildSettings.activeBuildTarget);
+                XRGeneralSettings generalSettings = XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(buildTargetGroup);
+                s_StripXRVariants = generalSettings == null || generalSettings.Manager == null || generalSettings.Manager.activeLoaders.Count <= 0;
 
-            if (XRPlatformBuildTimeDetect.GetInstance().isStandaloneXR)
-                s_StripDebugDisplayShaders = true;
+                if (platformBuildTimeDetect.isStandaloneXR)
+                    s_StripDebugDisplayShaders = true;
 
-            if (XRPlatformBuildTimeDetect.GetInstance().isHololens)
-            {
-                s_KeepOffVariantForAdditionalLights = true;
-                s_UseSHPerVertexForSHAuto = true;
-            }
-
-            if (XRPlatformBuildTimeDetect.GetInstance().isQuest)
-            {
-                s_KeepOffVariantForAdditionalLights = true;
-                s_UseSHPerVertexForSHAuto = true;
-            }
+                if (platformBuildTimeDetect.isHololens || platformBuildTimeDetect.isQuest)
+                {
+                    s_KeepOffVariantForAdditionalLights = true;
+                    s_UseSoftShadowQualityLevelKeywords = true;
+                    s_UseSHPerVertexForSHAuto = true;
+                }
             #else
-            s_StripXRVariants = true;
+                s_UseSoftShadowQualityLevelKeywords = false;
+                s_StripXRVariants = true;
             #endif
         }
 
+        internal static void GetEveryVolumeFeatures(ref VolumeFeatures volumeFeatures)
+        {
+            volumeFeatures = VolumeFeatures.All;
+        }
+
         // Checks each Volume Profile Assets for used features...
-        private static void GetSupportedFeaturesFromVolumes()
+        private static void GetSupportedFeaturesFromVolumes(ref VolumeFeatures volumeFeatures)
         {
             if (!s_StripUnusedPostProcessingVariants)
                 return;
 
-            s_VolumeFeatures = VolumeFeatures.Calculated;
+            volumeFeatures = VolumeFeatures.Calculated;
             string[] guids = AssetDatabase.FindAssets("t:VolumeProfile");
             foreach (string guid in guids)
             {
@@ -294,26 +337,101 @@ namespace UnityEditor.Rendering.Universal
                     continue;
 
                 if (asset.Has<LensDistortion>())
-                    s_VolumeFeatures |= VolumeFeatures.LensDistortion;
-                if (asset.Has<Bloom>())
-                    s_VolumeFeatures |= VolumeFeatures.Bloom;
+                    volumeFeatures |= VolumeFeatures.LensDistortion;
+
+                Bloom bloom;
+                if (asset.TryGet<Bloom>(out bloom))
+                {
+                    //strip unused bloom variants. #pragma multi_compile_local_fragment _ _BLOOM_LQ _BLOOM_HQ _BLOOM_LQ_DIRT _BLOOM_HQ_DIRT
+                    if (bloom.highQualityFiltering.value)
+                    {
+                        if (bloom.dirtIntensity.value > 0f && bloom.dirtTexture.value != null)
+                            volumeFeatures |= VolumeFeatures.BloomHQDirt;
+                        else
+                            volumeFeatures |= VolumeFeatures.BloomHQ;
+                    }
+                    else
+                    {
+                        if (bloom.dirtIntensity.value > 0f && bloom.dirtTexture.value != null)
+                            volumeFeatures |= VolumeFeatures.BloomLQDirt;
+                        else
+                            volumeFeatures |= VolumeFeatures.BloomLQ;
+                    }
+                }
+
                 if (asset.Has<Tonemapping>())
-                    s_VolumeFeatures |= VolumeFeatures.ToneMapping;
+                    volumeFeatures |= VolumeFeatures.ToneMapping;
                 if (asset.Has<FilmGrain>())
-                    s_VolumeFeatures |= VolumeFeatures.FilmGrain;
+                    volumeFeatures |= VolumeFeatures.FilmGrain;
                 if (asset.Has<DepthOfField>())
-                    s_VolumeFeatures |= VolumeFeatures.DepthOfField;
+                    volumeFeatures |= VolumeFeatures.DepthOfField;
                 if (asset.Has<MotionBlur>())
-                    s_VolumeFeatures |= VolumeFeatures.CameraMotionBlur;
+                    volumeFeatures |= VolumeFeatures.CameraMotionBlur;
                 if (asset.Has<PaniniProjection>())
-                    s_VolumeFeatures |= VolumeFeatures.PaniniProjection;
+                    volumeFeatures |= VolumeFeatures.PaniniProjection;
                 if (asset.Has<ChromaticAberration>())
-                    s_VolumeFeatures |= VolumeFeatures.ChromaticAberration;
+                    volumeFeatures |= VolumeFeatures.ChromaticAberration;
+            }
+        }
+
+        internal static void GetEveryShaderFeatureAndPrefilteringData(List<ShaderFeatures> rendererFeaturesList, ref ShaderPrefilteringData spd)
+        {
+            // Add one Shader Features item that includes every keyword used by URP Shaders
+            ShaderFeatures shaderFeatures = ShaderFeatures.All;
+            rendererFeaturesList.Add(shaderFeatures);
+
+            // Shader Prefiltering
+            // Get prefiltering data that has every feature enabled
+            spd = ShaderPrefilteringData.GetDefault();
+        }
+
+        // Used when Strip Unused Variants is disabled in the Global Settings.
+        // One ShaderFeatures item, containing all the keywords used in URP, is added to the
+        // s_SupportedFeaturesList and then every URP asset is updated so it doesn't prefilter any keywords.
+        private static void GetEveryShaderFeatureAndUpdateURPAssets(List<ShaderFeatures> rendererFeaturesList)
+        {
+            ShaderPrefilteringData spd = new();
+            GetEveryShaderFeatureAndPrefilteringData(rendererFeaturesList, ref spd);
+
+            // Update each asset so it has every feature enabled
+            using (ListPool<UniversalRenderPipelineAsset>.Get(out List<UniversalRenderPipelineAsset> urpAssets))
+            {
+                bool buildingForURP = EditorUserBuildSettings.activeBuildTarget.TryGetRenderPipelineAssets(urpAssets);
+                if (!buildingForURP)
+                    return;
+
+                for (int urpAssetIndex = 0; urpAssetIndex < urpAssets.Count; urpAssetIndex++)
+                {
+                    UniversalRenderPipelineAsset urpAsset = urpAssets[urpAssetIndex];
+                    if (urpAsset == null)
+                        continue;
+
+                    // Update the Prefiltering settings for this URP asset
+                    urpAsset.UpdateShaderKeywordPrefiltering(ref spd);
+
+                    // Mark the asset dirty so it can be serialized once the build is finished
+                    EditorUtility.SetDirty(urpAsset);
+                }
+            }
+        }
+
+        // The path for gathering shader features for normal shader stripping
+        private static void HandleEnabledShaderStripping()
+        {
+            s_Strip2DPasses = true;
+            using (ListPool<UniversalRenderPipelineAsset>.Get(out List<UniversalRenderPipelineAsset> urpAssets))
+            {
+                bool buildingForURP = EditorUserBuildSettings.activeBuildTarget.TryGetRenderPipelineAssets(urpAssets);
+                if (buildingForURP)
+                {
+                    // Get Supported features & update data used for Shader Prefiltering and Scriptable Stripping
+                    GetSupportedShaderFeaturesFromAssets(ref urpAssets, ref s_SupportedFeaturesList, s_StripUnusedVariants);
+                }
             }
         }
 
         // Checks each Universal Render Pipeline Asset for features used...
-        internal static void GetSupportedShaderFeaturesFromAssets(ref List<UniversalRenderPipelineAsset> urpAssets, ref List<ShaderFeatures> rendererFeaturesList, bool stripUnusedVariants)
+        private static void GetSupportedShaderFeaturesFromAssets(ref List<UniversalRenderPipelineAsset> urpAssets, ref List<ShaderFeatures> rendererFeaturesList, bool stripUnusedVariants)
         {
             List<ScreenSpaceAmbientOcclusionSettings> ssaoRendererFeatures = new List<ScreenSpaceAmbientOcclusionSettings>(16);
             for (int urpAssetIndex = 0; urpAssetIndex < urpAssets.Count; urpAssetIndex++)
@@ -339,12 +457,12 @@ namespace UnityEditor.Rendering.Universal
                     containsForwardRenderer,
                     everyRendererHasSSAO,
                     s_StripXRVariants,
-                    !PlayerSettings.useHDRDisplay || !urpAsset.supportsHDR,
+                    !PlayerSettings.allowHDRDisplaySupport || !urpAsset.supportsHDR,
                     s_StripDebugDisplayShaders,
                     s_StripScreenCoordOverrideVariants,
                     s_StripUnusedVariants,
                     ref ssaoRendererFeatures
-                );
+                    );
 
                 // Update the Prefiltering settings for this URP asset
                 urpAsset.UpdateShaderKeywordPrefiltering(ref spd);
@@ -383,6 +501,15 @@ namespace UnityEditor.Rendering.Universal
                     throw new ArgumentOutOfRangeException();
             }
 
+            if (urpAsset.lightProbeSystem == LightProbeSystem.ProbeVolumes)
+            {
+                if (urpAsset.probeVolumeSHBands == ProbeVolumeSHBands.SphericalHarmonicsL1)
+                    urpAssetShaderFeatures |= ShaderFeatures.ProbeVolumeL1;
+
+                if (urpAsset.probeVolumeSHBands == ProbeVolumeSHBands.SphericalHarmonicsL2)
+                    urpAssetShaderFeatures |= ShaderFeatures.ProbeVolumeL2;
+            }
+
             if (urpAsset.supportsMixedLighting)
                 urpAssetShaderFeatures |= ShaderFeatures.MixedLighting;
 
@@ -398,7 +525,7 @@ namespace UnityEditor.Rendering.Universal
             if (urpAsset.supportsLightCookies)
                 urpAssetShaderFeatures |= ShaderFeatures.LightCookies;
 
-            bool hasHDROutput = PlayerSettings.useHDRDisplay && urpAsset.supportsHDR;
+            bool hasHDROutput = PlayerSettings.allowHDRDisplaySupport && urpAsset.supportsHDR;
             if (urpAsset.colorGradingMode == ColorGradingMode.HighDynamicRange || hasHDROutput)
                 urpAssetShaderFeatures |= ShaderFeatures.HdrGrading;
 
@@ -407,6 +534,25 @@ namespace UnityEditor.Rendering.Universal
 
             if (urpAsset.shEvalMode == ShEvalMode.Auto)
                 urpAssetShaderFeatures |= ShaderFeatures.AutoSHMode;
+
+            if (urpAsset.supportScreenSpaceLensFlare)
+                urpAssetShaderFeatures |= ShaderFeatures.ScreenSpaceLensFlare;
+
+            if (urpAsset.supportDataDrivenLensFlare)
+                urpAssetShaderFeatures |= ShaderFeatures.DataDrivenLensFlare;
+
+            if (urpAsset.gpuResidentDrawerMode != GPUResidentDrawerMode.Disabled)
+                urpAssetShaderFeatures |= ShaderFeatures.UseLegacyLightmaps;
+
+            // URP post-processing and alpha output follows the back-buffer color format requested in the asset.
+            // Back-buffer alpha format is required. Or a render texture with alpha formats.
+            // Without any external option we would need to keep all shaders and assume potential alpha output for all projects.
+            // Therefore we strip the shader based on the asset enabling the alpha output for post-processing.
+            // Alpha backbuffer is supported for:
+            //   SDR 32-bit, RGBA8, (!urpAsset.supportsHDR)
+            //   HDR 64-bit, RGBA16Float, (urpAsset.supportsHDR && urpAsset.hdrColorBufferPrecision == HDRColorBufferPrecision._64Bits)
+            if(urpAsset.allowPostProcessAlphaOutput)
+                urpAssetShaderFeatures |= ShaderFeatures.AlphaOutput;
 
             // Check each renderer & renderer feature
             urpAssetShaderFeatures = GetSupportedShaderFeaturesFromRenderers(
@@ -445,10 +591,12 @@ namespace UnityEditor.Rendering.Universal
             ScriptableRendererData[] rendererDataArray = urpAsset.m_RendererDataList;
             for (int rendererIndex = 0; rendererIndex < rendererDataArray.Length; ++rendererIndex)
             {
-                // Get feature requirements from the renderer
-                ScriptableRenderer renderer = urpAsset.GetRenderer(rendererIndex);
+                if (rendererDataArray[rendererIndex] == null)
+                    continue;
+
+                // Get feature requirements from the renderer data
                 ScriptableRendererData rendererData = rendererDataArray[rendererIndex];
-                RendererRequirements rendererRequirements = GetRendererRequirements(ref urpAsset, ref renderer, ref rendererData, stripUnusedVariants);
+                RendererRequirements rendererRequirements = GetRendererRequirements(ref urpAsset, ref rendererData);
 
                 // Get & add Supported features from renderers used for Scriptable Stripping and prefiltering.
                 ShaderFeatures rendererShaderFeatures = GetSupportedShaderFeaturesFromRenderer(ref rendererRequirements, ref rendererData, ref ssaoRendererFeatures, ref containsForwardRenderer, urpAssetShaderFeatures);
@@ -458,7 +606,7 @@ namespace UnityEditor.Rendering.Universal
                 everyRendererHasSSAO &= IsFeatureEnabled(rendererShaderFeatures, ShaderFeatures.ScreenSpaceOcclusion);
 
                 // Check for completely removing 2D passes
-                s_Strip2DPasses &= renderer is not Renderer2D;
+                s_Strip2DPasses &= rendererData is not Renderer2DData;
 
                 // Add the features from the renderer to the combined feature set for this URP Asset
                 combinedURPAssetShaderFeatures |= rendererShaderFeatures;
@@ -467,33 +615,40 @@ namespace UnityEditor.Rendering.Universal
             return combinedURPAssetShaderFeatures;
         }
 
-        internal static RendererRequirements GetRendererRequirements(ref UniversalRenderPipelineAsset urpAsset, ref ScriptableRenderer renderer, ref ScriptableRendererData rendererData, bool stripUnusedVariants)
+        internal static bool NeedsProceduralKeyword(ref RendererRequirements rendererRequirements)
         {
-            UniversalRenderer universalRenderer = renderer as UniversalRenderer;
+            #if ENABLE_VR && ENABLE_XR_MODULE
+                var xrResourcesAreValid = GraphicsSettings.GetRenderPipelineSettings<UniversalRenderPipelineRuntimeXRResources>()?.valid ?? false;
+                return rendererRequirements.isUniversalRenderer && xrResourcesAreValid;
+            #else
+                return false;
+            #endif
+        }
+
+
+        internal static RendererRequirements GetRendererRequirements(ref UniversalRenderPipelineAsset urpAsset, ref ScriptableRendererData rendererData)
+        {
             UniversalRendererData universalRendererData = rendererData as UniversalRendererData;
 
             RendererRequirements rsd = new();
-            rsd.needsUnusedVariants               = !stripUnusedVariants;
-            rsd.isUniversalRenderer               = universalRendererData != null && universalRenderer != null;
+            rsd.isUniversalRenderer               = universalRendererData != null;
             rsd.msaaSampleCount                   = urpAsset.msaaSampleCount;
             rsd.renderingMode                     = rsd.isUniversalRenderer ? universalRendererData.renderingMode : RenderingMode.Forward;
             rsd.needsMainLightShadows             = urpAsset.supportsMainLightShadows && urpAsset.mainLightRenderingMode == LightRenderingMode.PerPixel;
             rsd.needsAdditionalLightShadows       = urpAsset.supportsAdditionalLightShadows && (urpAsset.additionalLightsRenderingMode == LightRenderingMode.PerPixel || rsd.renderingMode == RenderingMode.ForwardPlus);
             rsd.needsSoftShadows                  = urpAsset.supportsSoftShadows && (rsd.needsMainLightShadows || rsd.needsAdditionalLightShadows);
-            rsd.needsShadowsOff                   = !renderer.stripShadowsOffVariants;
-            rsd.needsAdditionalLightsOff          = s_KeepOffVariantForAdditionalLights || !renderer.stripAdditionalLightOffVariants;
+            rsd.needsSoftShadowsQualityLevels     = rsd.needsSoftShadows && s_UseSoftShadowQualityLevelKeywords;
+            rsd.needsShadowsOff                   = !rendererData.stripShadowsOffVariants;
+            rsd.needsAdditionalLightsOff          = s_KeepOffVariantForAdditionalLights || !rendererData.stripAdditionalLightOffVariants;
             rsd.needsGBufferRenderingLayers       = (rsd.isUniversalRenderer && rsd.renderingMode == RenderingMode.Deferred && urpAsset.useRenderingLayers);
-            rsd.needsGBufferAccurateNormals       = (rsd.isUniversalRenderer && rsd.renderingMode == RenderingMode.Deferred && universalRenderer.accurateGbufferNormals);
-            rsd.needsRenderPass                   = (rsd.isUniversalRenderer && rsd.renderingMode == RenderingMode.Deferred && universalRenderer.useRenderPassEnabled);
-            rsd.needsReflectionProbeBlending      = urpAsset.reflectionProbeBlending;
+            rsd.needsGBufferAccurateNormals       = (rsd.isUniversalRenderer && rsd.renderingMode == RenderingMode.Deferred && universalRendererData.accurateGbufferNormals);
+            rsd.needsRenderPass                   = (rsd.isUniversalRenderer && rsd.renderingMode == RenderingMode.Deferred);
+            rsd.needsReflectionProbeBlending      = urpAsset.ShouldUseReflectionProbeBlending();
             rsd.needsReflectionProbeBoxProjection = urpAsset.reflectionProbeBoxProjection;
+            // META CHANGE START: Added Reflection Probe Atlas requirement for VR performance
             rsd.needsReflectionProbeAtlas         = urpAsset.reflectionProbeAtlas;
-
-            #if ENABLE_VR && ENABLE_XR_MODULE
-            rsd.needsProcedural                   = rsd.isUniversalRenderer && universalRendererData.xrSystemData != null;
-            #else
-            rsd.needsProcedural                   = false;
-            #endif
+            // META CHANGE END
+            rsd.needsProcedural                   = NeedsProceduralKeyword(ref rsd);
             rsd.needsSHVertexForSHAuto            = s_UseSHPerVertexForSHAuto;
 
             return rsd;
@@ -544,37 +699,34 @@ namespace UnityEditor.Rendering.Universal
 
             // Main & Additional Light Shadows
 
-            // When the OFF variant is available, the shadow keywords can
-            // be stripped based on the settings in the URP Assets.
+            // Keeps the Off variant for Main and Additional Light shadows
             if (rendererRequirements.needsShadowsOff)
-            {
-                // Keeps the Off variant for Main and Additional Light shadows
                 shaderFeatures |= ShaderFeatures.ShadowsKeepOffVariants;
 
-                if (rendererRequirements.needsMainLightShadows)
-                {
-                    // Cascade count can be changed at runtime, so include both of them
-                    shaderFeatures |= ShaderFeatures.MainLightShadows;
-                    shaderFeatures |= ShaderFeatures.MainLightShadowsCascade;
-                }
-
-                if (rendererRequirements.needsAdditionalLightShadows)
-                    shaderFeatures |= ShaderFeatures.AdditionalLightShadows;
-            }
-            // When the OFF variant should be stripped, the Main & Additional Light Keywords
-            // are always included and Main Light Cascade is added if main light shadows are enabled in the asset
-            else
+            if (rendererRequirements.needsMainLightShadows)
             {
+                // Cascade count can be changed at runtime, so include both of them
                 shaderFeatures |= ShaderFeatures.MainLightShadows;
+                shaderFeatures |= ShaderFeatures.MainLightShadowsCascade;
+            }
+
+            // Additional Light Shadows
+            if (rendererRequirements.needsAdditionalLightShadows)
                 shaderFeatures |= ShaderFeatures.AdditionalLightShadows;
 
-                if (rendererRequirements.needsMainLightShadows)
-                    shaderFeatures |= ShaderFeatures.MainLightShadowsCascade;
-            }
-
             // Soft shadows for Main and Additional Lights
-            if (rendererRequirements.needsSoftShadows)
+            if (rendererRequirements.needsSoftShadows && !rendererRequirements.needsSoftShadowsQualityLevels)
                 shaderFeatures |= ShaderFeatures.SoftShadows;
+
+            if (rendererRequirements.needsSoftShadowsQualityLevels)
+            {
+                if (UniversalRenderPipeline.asset?.softShadowQuality == SoftShadowQuality.Low)
+                    shaderFeatures |= ShaderFeatures.SoftShadowsLow;
+                if (UniversalRenderPipeline.asset?.softShadowQuality == SoftShadowQuality.Medium)
+                    shaderFeatures |= ShaderFeatures.SoftShadowsMedium;
+                if (UniversalRenderPipeline.asset?.softShadowQuality == SoftShadowQuality.High)
+                    shaderFeatures |= ShaderFeatures.SoftShadowsHigh;
+            }
 
             // Deferred GBuffer Rendering Layers
             if (rendererRequirements.needsGBufferRenderingLayers)
@@ -596,8 +748,10 @@ namespace UnityEditor.Rendering.Universal
             if (rendererRequirements.needsReflectionProbeBoxProjection)
                 shaderFeatures |= ShaderFeatures.ReflectionProbeBoxProjection;
 
+            // META CHANGE START: Added Reflection Probe Atlas feature for VR performance
             if (rendererRequirements.needsReflectionProbeAtlas)
                 shaderFeatures |= ShaderFeatures.ReflectionProbeAtlas;
+            // META CHANGE END
 
             if (rendererRequirements.needsSHVertexForSHAuto)
                 shaderFeatures |= ShaderFeatures.AutoSHModePerVertex;
@@ -622,11 +776,15 @@ namespace UnityEditor.Rendering.Universal
                     continue;
 
                 // We don't add disabled renderer features if "Strip Unused Variants" is enabled.
-                if (!rendererRequirements.needsUnusedVariants && !rendererFeature.isActive)
+                if (!rendererFeature.isActive)
                     continue;
 
                 // Rendering Layers...
-                if (rendererRequirements.isUniversalRenderer && rendererFeature.RequireRenderingLayers(isDeferredRenderer, out RenderingLayerUtils.Event rendererEvent, out _))
+                if (rendererRequirements.isUniversalRenderer &&
+                    RenderingLayerUtils.RequireRenderingLayers(rendererFeatures,
+                        rendererRequirements.renderingMode,
+                        rendererRequirements.needsGBufferAccurateNormals,
+                        rendererRequirements.msaaSampleCount, out RenderingLayerUtils.Event rendererEvent, out _))
                 {
                     usesRenderingLayers = true;
                     RenderingLayerUtils.CombineRendererEvents(isDeferredRenderer, rendererRequirements.msaaSampleCount, rendererEvent, ref renderingLayersEvent);
@@ -636,10 +794,8 @@ namespace UnityEditor.Rendering.Universal
                 ScreenSpaceShadows sssFeature = rendererFeature as ScreenSpaceShadows;
                 if (sssFeature != null)
                 {
-                    // Add it if it's enabled or if unused variants should not be stripped...
-                    if (sssFeature.isActive || rendererRequirements.needsUnusedVariants)
-                        shaderFeatures |= ShaderFeatures.ScreenSpaceShadows;
-
+                    // The feature is active (Tested a few lines above)
+                    shaderFeatures |= ShaderFeatures.ScreenSpaceShadows;
                     continue;
                 }
 
@@ -651,21 +807,11 @@ namespace UnityEditor.Rendering.Universal
                     ScreenSpaceAmbientOcclusionSettings ssaoSettings = ssaoFeature.settings;
                     ssaoRendererFeatures.Add(ssaoSettings);
 
-                    // Keep _SCREEN_SPACE_OCCLUSION and the Off variant when stripping of unused variants is disabled
-                    if (rendererRequirements.needsUnusedVariants)
-                    {
-                        shaderFeatures |= ShaderFeatures.ScreenSpaceOcclusion;
-                        shaderFeatures |= ShaderFeatures.ScreenSpaceOcclusionAfterOpaque;
-                    }
-
                     // The feature is active (Tested a few lines above) so check for AfterOpaque
+                    if (ssaoSettings.AfterOpaque)
+                        shaderFeatures |= ShaderFeatures.ScreenSpaceOcclusionAfterOpaque;
                     else
-                    {
-                        if (ssaoSettings.AfterOpaque)
-                            shaderFeatures |= ShaderFeatures.ScreenSpaceOcclusionAfterOpaque;
-                        else
-                            shaderFeatures |= ShaderFeatures.ScreenSpaceOcclusion;
-                    }
+                        shaderFeatures |= ShaderFeatures.ScreenSpaceOcclusion;
 
                     // Otherwise the keyword will not be used
                     continue;
@@ -675,51 +821,37 @@ namespace UnityEditor.Rendering.Universal
                 DecalRendererFeature decal = rendererFeature as DecalRendererFeature;
                 if (decal != null && rendererRequirements.isUniversalRenderer)
                 {
-                    // Keep all Decals variants when stripping of unused variants is disabled
-                    if (rendererRequirements.needsUnusedVariants)
+                    DecalTechnique technique = decal.GetTechnique(isDeferredRenderer, rendererRequirements.needsGBufferAccurateNormals, false);
+                    switch (technique)
                     {
-                        shaderFeatures |= ShaderFeatures.DBufferMRT1;
-                        shaderFeatures |= ShaderFeatures.DBufferMRT2;
-                        shaderFeatures |= ShaderFeatures.DBufferMRT3;
-                        shaderFeatures |= ShaderFeatures.DecalNormalBlendLow;
-                        shaderFeatures |= ShaderFeatures.DecalNormalBlendMedium;
-                        shaderFeatures |= ShaderFeatures.DecalNormalBlendHigh;
-                        shaderFeatures |= ShaderFeatures.DecalGBuffer;
-                        shaderFeatures |= ShaderFeatures.DecalLayers;
+                        case DecalTechnique.DBuffer:
+                            shaderFeatures |= GetFromDecalSurfaceData(decal.GetDBufferSettings().surfaceData);
+                            break;
+                        case DecalTechnique.ScreenSpace:
+                            shaderFeatures |= GetFromNormalBlend(decal.GetScreenSpaceSettings().normalBlend);
+                            shaderFeatures |= ShaderFeatures.DecalScreenSpace;
+                            break;
+                        case DecalTechnique.GBuffer:
+                            shaderFeatures |= GetFromNormalBlend(decal.GetScreenSpaceSettings().normalBlend);
+                            shaderFeatures |= ShaderFeatures.DecalGBuffer;
+                            //data.shaderFeatures |= ShaderFeatures.DecalScreenSpace; // In case deferred is not supported it will fallback to forward
+                            break;
                     }
-                    else
-                    {
-                        DecalTechnique technique = decal.GetTechnique(isDeferredRenderer, false);
-                        switch (technique)
-                        {
-                            case DecalTechnique.DBuffer:
-                                shaderFeatures |= GetFromDecalSurfaceData(decal.GetDBufferSettings().surfaceData);
-                                break;
-                            case DecalTechnique.ScreenSpace:
-                                shaderFeatures |= GetFromNormalBlend(decal.GetScreenSpaceSettings().normalBlend);
-                                shaderFeatures |= ShaderFeatures.DecalScreenSpace;
-                                break;
-                            case DecalTechnique.GBuffer:
-                                shaderFeatures |= GetFromNormalBlend(decal.GetScreenSpaceSettings().normalBlend);
-                                shaderFeatures |= ShaderFeatures.DecalGBuffer;
-                                //data.shaderFeatures |= ShaderFeatures.DecalScreenSpace; // In case deferred is not supported it will fallback to forward
-                                break;
-                        }
 
-                        if (decal.requiresDecalLayers)
-                            shaderFeatures |= ShaderFeatures.DecalLayers;
-                    }
+                    if (decal.requiresDecalLayers)
+                        shaderFeatures |= ShaderFeatures.DecalLayers;
                 }
             }
 
             // If using rendering layers, enable the appropriate feature
             if (usesRenderingLayers)
             {
-                if (rendererRequirements.needsUnusedVariants)
+                if (isDeferredRenderer)
                 {
-                    shaderFeatures |= ShaderFeatures.GBufferWriteRenderingLayers;
-                    shaderFeatures |= ShaderFeatures.OpaqueWriteRenderingLayers;
+                    // Rendering layers in both Depth Normal and GBuffer passes are needed
+                    // as some object might be rendered in forward and others in deferred.
                     shaderFeatures |= ShaderFeatures.DepthNormalPassRenderingLayers;
+                    shaderFeatures |= ShaderFeatures.GBufferWriteRenderingLayers;
                 }
                 else
                 {
@@ -731,10 +863,7 @@ namespace UnityEditor.Rendering.Universal
                             break;
 
                         case RenderingLayerUtils.Event.Opaque:
-                            if (isDeferredRenderer)
-                                shaderFeatures |= ShaderFeatures.GBufferWriteRenderingLayers;
-                            else
-                                shaderFeatures |= ShaderFeatures.OpaqueWriteRenderingLayers;
+                            shaderFeatures |= ShaderFeatures.OpaqueWriteRenderingLayers;
                             break;
 
                         default:
@@ -794,16 +923,23 @@ namespace UnityEditor.Rendering.Universal
             bool stripDebug,
             bool stripScreenCoord,
             bool stripUnusedVariants,
-            ref List<ScreenSpaceAmbientOcclusionSettings> ssaoRendererFeatures)
+            ref List<ScreenSpaceAmbientOcclusionSettings> ssaoRendererFeatures
+            )
         {
             bool isAssetUsingForwardPlus = IsFeatureEnabled(shaderFeatures, ShaderFeatures.ForwardPlus);
             bool isAssetUsingDeferred = IsFeatureEnabled(shaderFeatures, ShaderFeatures.DeferredShading);
 
             ShaderPrefilteringData spd = new();
             spd.stripXRKeywords = stripXR;
+            spd.stripSoftShadowsQualityLow = !IsFeatureEnabled(shaderFeatures, ShaderFeatures.SoftShadowsLow);
+            spd.stripSoftShadowsQualityMedium = !IsFeatureEnabled(shaderFeatures, ShaderFeatures.SoftShadowsMedium);
+            spd.stripSoftShadowsQualityHigh = !IsFeatureEnabled(shaderFeatures, ShaderFeatures.SoftShadowsHigh);
             spd.stripHDRKeywords = stripHDR;
+            spd.stripAlphaOutputKeywords = !IsFeatureEnabled(shaderFeatures, ShaderFeatures.AlphaOutput);
             spd.stripDebugDisplay = stripDebug;
             spd.stripScreenCoordOverride = stripScreenCoord;
+            spd.stripReflectionProbeBlending = !IsFeatureEnabled(shaderFeatures, ShaderFeatures.ReflectionProbeBlending);
+            spd.stripReflectionProbeBoxProjection = !IsFeatureEnabled(shaderFeatures, ShaderFeatures.ReflectionProbeBoxProjection);
 
             // Rendering Modes
             // Check if only Deferred is being used
@@ -891,8 +1027,22 @@ namespace UnityEditor.Rendering.Universal
                 && !IsFeatureEnabled(shaderFeatures, ShaderFeatures.GBufferWriteRenderingLayers)
                 && !IsFeatureEnabled(shaderFeatures, ShaderFeatures.OpaqueWriteRenderingLayers);
 
+            // Disable lightmap texture arrays (GPU resident drawer)
+            spd.useLegacyLightmaps = IsFeatureEnabled(shaderFeatures, ShaderFeatures.UseLegacyLightmaps);
+
             // Screen Space Ambient Occlusion
             spd.screenSpaceOcclusionPrefilteringMode = PrefilteringMode.Remove;
+            if (IsFeatureEnabled(shaderFeatures, ShaderFeatures.ScreenSpaceOcclusion))
+            {
+                // Remove the SSAO's OFF variant if Global Settings allow it and every renderer uses it.
+                if (stripUnusedVariants && everyRendererHasSSAO)
+                    spd.screenSpaceOcclusionPrefilteringMode = PrefilteringMode.SelectOnly;
+                // Otherwise we keep both
+                else
+                    spd.screenSpaceOcclusionPrefilteringMode = PrefilteringMode.Select;
+            }
+
+            // SSAO shader keywords
             spd.stripSSAODepthNormals      = true;
             spd.stripSSAOSourceDepthLow    = true;
             spd.stripSSAOSourceDepthMedium = true;
@@ -902,29 +1052,19 @@ namespace UnityEditor.Rendering.Universal
             spd.stripSSAOSampleCountLow    = true;
             spd.stripSSAOSampleCountMedium = true;
             spd.stripSSAOSampleCountHigh   = true;
-            if (IsFeatureEnabled(shaderFeatures, ShaderFeatures.ScreenSpaceOcclusion))
+            for (int i = 0; i < ssaoRendererFeatures.Count; i++)
             {
-                // Remove the SSAO's OFF variant if Global Settings allow it and every renderer uses it.
-                if (stripUnusedVariants && everyRendererHasSSAO)
-                    spd.screenSpaceOcclusionPrefilteringMode = PrefilteringMode.SelectOnly;
-                // Otherwise we keep both
-                else
-                    spd.screenSpaceOcclusionPrefilteringMode = PrefilteringMode.Select;
-
-                for (int i = 0; i < ssaoRendererFeatures.Count; i++)
-                {
-                    ScreenSpaceAmbientOcclusionSettings ssaoSettings = ssaoRendererFeatures[i];
-                    bool isUsingDepthNormals = ssaoSettings.Source == ScreenSpaceAmbientOcclusionSettings.DepthSource.DepthNormals;
-                    spd.stripSSAODepthNormals      &= !isUsingDepthNormals;
-                    spd.stripSSAOSourceDepthLow    &= isUsingDepthNormals || ssaoSettings.NormalSamples != ScreenSpaceAmbientOcclusionSettings.NormalQuality.Low;
-                    spd.stripSSAOSourceDepthMedium &= isUsingDepthNormals || ssaoSettings.NormalSamples != ScreenSpaceAmbientOcclusionSettings.NormalQuality.Medium;
-                    spd.stripSSAOSourceDepthHigh   &= isUsingDepthNormals || ssaoSettings.NormalSamples != ScreenSpaceAmbientOcclusionSettings.NormalQuality.High;
-                    spd.stripSSAOBlueNoise         &= ssaoSettings.AOMethod != ScreenSpaceAmbientOcclusionSettings.AOMethodOptions.BlueNoise;
-                    spd.stripSSAOInterleaved       &= ssaoSettings.AOMethod != ScreenSpaceAmbientOcclusionSettings.AOMethodOptions.InterleavedGradient;
-                    spd.stripSSAOSampleCountLow    &= ssaoSettings.Samples != ScreenSpaceAmbientOcclusionSettings.AOSampleOption.Low;
-                    spd.stripSSAOSampleCountMedium &= ssaoSettings.Samples != ScreenSpaceAmbientOcclusionSettings.AOSampleOption.Medium;
-                    spd.stripSSAOSampleCountHigh   &= ssaoSettings.Samples != ScreenSpaceAmbientOcclusionSettings.AOSampleOption.High;
-                }
+                ScreenSpaceAmbientOcclusionSettings ssaoSettings = ssaoRendererFeatures[i];
+                bool isUsingDepthNormals = ssaoSettings.Source == ScreenSpaceAmbientOcclusionSettings.DepthSource.DepthNormals;
+                spd.stripSSAODepthNormals      &= !isUsingDepthNormals;
+                spd.stripSSAOSourceDepthLow    &= isUsingDepthNormals || ssaoSettings.NormalSamples != ScreenSpaceAmbientOcclusionSettings.NormalQuality.Low;
+                spd.stripSSAOSourceDepthMedium &= isUsingDepthNormals || ssaoSettings.NormalSamples != ScreenSpaceAmbientOcclusionSettings.NormalQuality.Medium;
+                spd.stripSSAOSourceDepthHigh   &= isUsingDepthNormals || ssaoSettings.NormalSamples != ScreenSpaceAmbientOcclusionSettings.NormalQuality.High;
+                spd.stripSSAOBlueNoise         &= ssaoSettings.AOMethod != ScreenSpaceAmbientOcclusionSettings.AOMethodOptions.BlueNoise;
+                spd.stripSSAOInterleaved       &= ssaoSettings.AOMethod != ScreenSpaceAmbientOcclusionSettings.AOMethodOptions.InterleavedGradient;
+                spd.stripSSAOSampleCountLow    &= ssaoSettings.Samples != ScreenSpaceAmbientOcclusionSettings.AOSampleOption.Low;
+                spd.stripSSAOSampleCountMedium &= ssaoSettings.Samples != ScreenSpaceAmbientOcclusionSettings.AOSampleOption.Medium;
+                spd.stripSSAOSampleCountHigh   &= ssaoSettings.Samples != ScreenSpaceAmbientOcclusionSettings.AOSampleOption.High;
             }
 
             return spd;

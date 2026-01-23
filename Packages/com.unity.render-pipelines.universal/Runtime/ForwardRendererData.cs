@@ -38,7 +38,7 @@ namespace UnityEngine.Rendering.Universal
             /// <summary>
             /// Screen space shadows shader.
             /// </summary>
-            [Obsolete("Obsolete, this feature will be supported by new 'ScreenSpaceShadows' renderer feature")]
+            [Obsolete("Obsolete, this feature will be supported by new 'ScreenSpaceShadows' renderer feature", true)]
             public Shader screenSpaceShadowPS;
 
             /// <summary>
@@ -68,7 +68,7 @@ namespace UnityEngine.Rendering.Universal
             /// <summary>
             /// Material error shader.
             /// </summary>
-            [Obsolete("Use fallbackErrorPS instead")]
+            [Obsolete("Use fallbackErrorPS instead", true)]
             [Reload("Shaders/Utils/MaterialError.shader")]
             public Shader materialErrorPS;
 
@@ -76,6 +76,7 @@ namespace UnityEngine.Rendering.Universal
             // TODO: move to core and share with HDRP
             [Reload("Shaders/Utils/CoreBlit.shader"), SerializeField]
             internal Shader coreBlitPS;
+
             [Reload("Shaders/Utils/CoreBlitColorAndDepth.shader"), SerializeField]
             internal Shader coreBlitColorAndDepthPS;
 
@@ -106,7 +107,7 @@ namespace UnityEngine.Rendering.Universal
         /// <summary>
         /// Shader resources needed in URP for XR.
         /// </summary>
-        [Reload("Runtime/Data/XRSystemData.asset")]
+        //[Reload("Runtime/Data/XRSystemData.asset")]
         public XRSystemData xrSystemData;
 #endif
 

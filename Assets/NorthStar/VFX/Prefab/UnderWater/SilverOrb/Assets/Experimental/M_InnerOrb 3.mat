@@ -24,16 +24,17 @@ Material:
   m_Shader: {fileID: -6465566751694194690, guid: b8aae66f82c266e44acf1625b25a2d40,
     type: 3}
   m_Parent: {fileID: 2100000, guid: 0d71cc1ad971143418622aa5df116b51, type: 2}
-  m_ModifiedSerializedProperties: 0
+  m_ModifiedSerializedProperties: 16
   m_ValidKeywords: []
   m_InvalidKeywords:
   - _SURFACE_TYPE_TRANSPARENT
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 0
   m_DoubleSidedGI: 0
-  m_CustomRenderQueue: -1
+  m_CustomRenderQueue: 2000
   stringTagMap: {}
-  disabledShaderPasses: []
+  disabledShaderPasses:
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
@@ -51,6 +52,7 @@ Material:
     m_Colors:
     - _MeshDirection: {r: 1, g: 1, b: 0, a: 0}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!114 &6665014178361459055
 MonoBehaviour:
   m_ObjectHideFlags: 11
@@ -63,4 +65,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10

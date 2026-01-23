@@ -44,7 +44,7 @@ namespace NorthStar
         {
             _ = StartCoroutine(DeferredDisable());
 
-            var directors = FindObjectsOfType<PlayableDirector>(true);
+            var directors = FindObjectsByType<PlayableDirector>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             foreach (var director in directors)
             {
                 director.RebuildGraph();

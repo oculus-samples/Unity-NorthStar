@@ -1,4 +1,5 @@
 using Unity.Mathematics;
+using System.Collections.Generic;
 
 namespace UnityEngine.Rendering.Universal
 {
@@ -12,8 +13,15 @@ namespace UnityEngine.Rendering.Universal
         public int endLayerValue;
         public SortingLayerRange layerRange;
         public LightStats lightStats;
+        public bool useNormals;
         private unsafe fixed int renderTargetIds[4];
         private unsafe fixed bool renderTargetUsed[4];
+
+        public List<Light2D> lights;
+        public List<int> shadowIndices;
+        public List<ShadowCasterGroup2D> shadowCasters;
+
+        internal int[] activeBlendStylesIndices;
 
         public void InitRTIds(int index)
         {
@@ -25,6 +33,10 @@ namespace UnityEngine.Rendering.Universal
                     renderTargetIds[i] = Shader.PropertyToID($"_LightTexture_{index}_{i}");
                 }
             }
+
+            lights = new List<Light2D>();
+            shadowIndices = new List<int>();
+            shadowCasters = new List<ShadowCasterGroup2D>();
         }
 
         public RenderTargetIdentifier GetRTId(CommandBuffer cmd, RenderTextureDescriptor desc, int index)
@@ -91,13 +103,31 @@ namespace UnityEngine.Rendering.Universal
             return true;
         }
 
-        private static int FindUpperBoundInBatch(int startLayerIndex, SortingLayer[] sortingLayers, ILight2DCullResult lightCullResult)
+        private static bool CanBatchCameraSortingLayer(int startLayerIndex, SortingLayer[] sortingLayers, Renderer2DData rendererData)
         {
+            if (rendererData.useCameraSortingLayerTexture)
+            {
+                var cameraSortingLayerBoundsIndex = Render2DLightingPass.GetCameraSortingLayerBoundsIndex(rendererData);
+                return sortingLayers[startLayerIndex].value == cameraSortingLayerBoundsIndex;
+            }
+
+            return false;
+        }
+
+        private static int FindUpperBoundInBatch(int startLayerIndex, SortingLayer[] sortingLayers, Renderer2DData rendererData)
+        {
+            // break layer if camera sorting layer is active
+            if (CanBatchCameraSortingLayer(startLayerIndex, sortingLayers, rendererData))
+                return startLayerIndex;
+
             // start checking at the next layer
             for (var i = startLayerIndex + 1; i < sortingLayers.Length; i++)
             {
-                if (!CanBatchLightsInLayer(startLayerIndex, i, sortingLayers, lightCullResult))
+                if (!CanBatchLightsInLayer(startLayerIndex, i, sortingLayers, rendererData.lightCullResult))
                     return i - 1;
+
+                if (CanBatchCameraSortingLayer(i, sortingLayers, rendererData))
+                    return i;
             }
             return sortingLayers.Length - 1;
         }
@@ -129,20 +159,21 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
-        public static LayerBatch[] CalculateBatches(ILight2DCullResult lightCullResult, out int batchCount)
+        public static LayerBatch[] CalculateBatches(Renderer2DData rendererData, out int batchCount)
         {
             var cachedSortingLayers = Light2DManager.GetCachedSortingLayer();
             InitializeBatchInfos(cachedSortingLayers);
 
+            bool anyNormals = false;
             batchCount = 0;
             for (var i = 0; i < cachedSortingLayers.Length;)
             {
                 var layerToRender = cachedSortingLayers[i].id;
-                var lightStats = lightCullResult.GetLightStatsByLayer(layerToRender);
                 ref var layerBatch = ref s_LayerBatches[batchCount++];
+                var lightStats = rendererData.lightCullResult.GetLightStatsByLayer(layerToRender, ref layerBatch);
 
-                // Find the highest layer that share the same set of lights as this layer.
-                var upperLayerInBatch = FindUpperBoundInBatch(i, cachedSortingLayers, lightCullResult);
+                // Find the highest layer that share the same set of lights and shadows as this layer.
+                var upperLayerInBatch = FindUpperBoundInBatch(i, cachedSortingLayers, rendererData);
 
                 // Some renderers override their sorting layer value with short.MinValue or short.MaxValue.
                 // When drawing the first sorting layer, we should include the range from short.MinValue to layerValue.
@@ -164,10 +195,65 @@ namespace UnityEngine.Rendering.Universal
                 layerBatch.layerRange = sortingLayerRange;
                 layerBatch.lightStats = lightStats;
 
+                anyNormals |= layerBatch.lightStats.useNormalMap;
+
                 i = upperLayerInBatch + 1;
             }
 
+            // Account for Sprite Mask and normal map usage as there might be masks on a different layer that need to mask out the normals
+            for (var i = 0; i < batchCount; ++i)
+            {
+                ref var layerBatch = ref s_LayerBatches[i];
+                var hasSpriteMask = SpriteMaskUtility.HasSpriteMaskInLayerRange(layerBatch.layerRange);
+                layerBatch.useNormals = layerBatch.lightStats.useNormalMap || (anyNormals && hasSpriteMask);
+            }
+
+            SetupActiveBlendStyles();
+
             return s_LayerBatches;
+        }
+
+        public static void GetFilterSettings(Renderer2DData rendererData, ref LayerBatch layerBatch, out FilteringSettings filterSettings)
+        {
+            filterSettings = FilteringSettings.defaultValue;
+            filterSettings.renderQueueRange = RenderQueueRange.all;
+            filterSettings.layerMask = rendererData.layerMask;
+            filterSettings.renderingLayerMask = 0xFFFFFFFF;
+            filterSettings.sortingLayerRange = layerBatch.layerRange;
+        }
+
+        static void SetupActiveBlendStyles()
+        {
+            // Calculate active blend styles to save on total light textures allocated
+            for (int i = 0; i < s_LayerBatches.Length; ++i)
+            {
+                ref var layer = ref s_LayerBatches[i];
+
+                // Determine number of blend styles used
+                int size = 0;
+                for (var blendStyleIndex = 0; blendStyleIndex < RendererLighting.k_ShapeLightTextureIDs.Length; blendStyleIndex++)
+                {
+                    var blendStyleMask = (uint)(1 << blendStyleIndex);
+                    var blendStyleUsed = (layer.lightStats.blendStylesUsed & blendStyleMask) > 0;
+
+                    if (blendStyleUsed)
+                        size++;
+                }
+
+                if (layer.activeBlendStylesIndices == null || layer.activeBlendStylesIndices.Length != size)
+                    layer.activeBlendStylesIndices = new int[size];
+
+                // Save indices so we don't have to copy the whole Light2DBlendStyle struct
+                var index = 0;
+                for (var blendStyleIndex = 0; blendStyleIndex < RendererLighting.k_ShapeLightTextureIDs.Length; blendStyleIndex++)
+                {
+                    var blendStyleMask = (uint)(1 << blendStyleIndex);
+                    var blendStyleUsed = (layer.lightStats.blendStylesUsed & blendStyleMask) > 0;
+
+                    if (blendStyleUsed)
+                        layer.activeBlendStylesIndices[index++] = blendStyleIndex;
+                }
+            }
         }
     }
 }

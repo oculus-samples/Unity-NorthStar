@@ -1,6 +1,7 @@
 using System;
 using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering.Universal.Internal;
+using UnityEngine.Serialization;
 
 namespace UnityEngine.Rendering.Universal
 {
@@ -15,10 +16,10 @@ namespace UnityEngine.Rendering.Universal
         /// <seealso cref="Material"/>
         public Material blitMaterial;
         /// <summary>
-        /// Requested <c>GraphicsFormat</c> for HDR postprocess rendering.
+        /// Requested <c>GraphicsFormat</c> for postprocess rendering.
         /// </summary>
         /// <seealso cref="GraphicsFormat"/>
-        public GraphicsFormat requestHDRFormat;
+        public GraphicsFormat requestColorFormat;
 
         /// <summary>
         /// A static factory function for default initialization of PostProcessParams.
@@ -28,7 +29,7 @@ namespace UnityEngine.Rendering.Universal
         {
             PostProcessParams ppParams;
             ppParams.blitMaterial = null;
-            ppParams.requestHDRFormat = GraphicsFormat.None;
+            ppParams.requestColorFormat = GraphicsFormat.None;
             return ppParams;
         }
     }
@@ -106,8 +107,8 @@ namespace UnityEngine.Rendering.Universal
             if (data != null)
             {
                 m_ColorGradingLutPass = new ColorGradingLutPass(RenderPassEvent.BeforeRenderingPrePasses, data);
-                m_PostProcessPass = new PostProcessPass(RenderPassEvent.BeforeRenderingPostProcessing, data, ref ppParams);
-                m_FinalPostProcessPass = new PostProcessPass(RenderPassEvent.AfterRenderingPostProcessing, data, ref ppParams);
+                m_PostProcessPass = new PostProcessPass(RenderPassEvent.AfterRenderingPostProcessing - 1, data, ref ppParams);
+                m_FinalPostProcessPass = new PostProcessPass(RenderPassEvent.AfterRendering - 1, data, ref ppParams);
                 m_CurrentPostProcessData = data;
             }
         }

@@ -6,24 +6,17 @@ using UnityEngine;
 
 namespace UnityEditor.VFX.URP
 {
-    [VFXInfo]
+    [VFXHelpURL("Context-OutputPrimitive")]
+    [VFXInfo(name = "Output Particle|URP Lit|Mesh", category = "#2Output Basic")]
     class VFXURPLitMeshOutput : VFXAbstractParticleURPLitOutput, IVFXMultiMeshOutput
     {
-        public override string name
-        {
-            get
-            {
-                return !string.IsNullOrEmpty(shaderName)
-                    ? $"Output Particle {shaderName} Mesh"
-                    : "Output Particle URP Lit Mesh";
-            }
-        }
-        public override string codeGeneratorTemplate { get { return RenderPipeTemplate("VFXParticleLitMesh"); } }
-        public override VFXTaskType taskType { get { return VFXTaskType.ParticleMeshOutput; } }
-        public override bool supportsUV { get { return GetOrRefreshShaderGraphObject() == null; } }
-        public override bool implementsMotionVector { get { return true; } }
+        public override string name => "Output Particle".AppendLabel("URP Lit").AppendLabel("Mesh");
+        public override string codeGeneratorTemplate => RenderPipeTemplate("VFXParticleLitMesh");
+        public override VFXTaskType taskType => VFXTaskType.ParticleMeshOutput;
+        public override bool supportsUV => GetOrRefreshShaderGraphObject() == null;
+        public override bool implementsMotionVector => true;
 
-        public override CullMode defaultCullMode { get { return CullMode.Back; } }
+        public override CullMode defaultCullMode => CullMode.Back;
 
         [VFXSetting(VFXSettingAttribute.VisibleFlags.InInspector), Range(1, 4), Tooltip("Specifies the number of different meshes (up to 4). Mesh per particle can be specified with the meshIndex attribute."), SerializeField]
         private uint MeshCount = 1;
@@ -42,39 +35,10 @@ namespace UnityEditor.VFX.URP
                         features |= VFXOutputUpdate.Features.MultiMesh;
                     if (lod)
                         features |= VFXOutputUpdate.Features.LOD;
-                    if (HasSorting() && VFXOutputUpdate.HasFeature(features, VFXOutputUpdate.Features.IndirectDraw))
-                        features |= VFXOutputUpdate.Features.Sort;
                 }
+                if (HasSorting() && VFXOutputUpdate.HasFeature(features, VFXOutputUpdate.Features.IndirectDraw))
+                    features |= VFXOutputUpdate.Features.Sort;
                 return features;
-            }
-        }
-
-        public override IEnumerable<VFXAttributeInfo> attributes
-        {
-            get
-            {
-                yield return new VFXAttributeInfo(VFXAttribute.Position, VFXAttributeMode.Read);
-                if (colorMode != ColorMode.None)
-                    yield return new VFXAttributeInfo(VFXAttribute.Color, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.Alpha, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.Alive, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.AxisX, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.AxisY, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.AxisZ, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.AngleX, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.AngleY, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.AngleZ, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.PivotX, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.PivotY, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.PivotZ, VFXAttributeMode.Read);
-
-                yield return new VFXAttributeInfo(VFXAttribute.Size, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.ScaleX, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.ScaleY, VFXAttributeMode.Read);
-                yield return new VFXAttributeInfo(VFXAttribute.ScaleZ, VFXAttributeMode.Read);
-
-                if (usesFlipbook)
-                    yield return new VFXAttributeInfo(VFXAttribute.TexIndex, VFXAttributeMode.Read);
             }
         }
 

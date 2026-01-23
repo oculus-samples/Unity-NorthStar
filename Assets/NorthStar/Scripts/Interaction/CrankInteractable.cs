@@ -116,8 +116,10 @@ namespace NorthStar
                         {
                             m_onRatchet?.Invoke();
                             m_ratchetBack %= m_step;
-                            // assigning secondaryAxis to itself resets relative rotation so that angular limits become a rolling window
-                            m_joint.secondaryAxis = m_joint.secondaryAxis;
+                            // resetting the connectedBody resets relative rotation so that angular limits become a rolling window
+                            var connectedBody = m_joint.connectedBody;
+                            m_joint.connectedBody = null;
+                            m_joint.connectedBody = connectedBody;
                         }
 
                         // tell the crank to pull back to 0 relative rotation if the player lets go

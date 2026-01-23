@@ -166,7 +166,7 @@ public class TextureMipmapChecker : EditorWindow
         {
             EditorUtility.DisplayProgressBar("Scanning Textures", "Scanning scene textures...", 0f);
 
-            var renderers = FindObjectsOfType<Renderer>();
+            var renderers = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
             for (var i = 0; i < renderers.Length; i++)
             {
                 EditorUtility.DisplayProgressBar("Scanning Textures", "Scanning scene textures...", (float)i / renderers.Length);

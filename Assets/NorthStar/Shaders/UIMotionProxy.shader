@@ -29,7 +29,7 @@ Shader "Unlit/UIMotionProxy"
             Tags { "RenderType" = "Opaque" }
 
             HLSLPROGRAM
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/OculusMotionVectorCore.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ObjectMotionVectors.hlsl"
 
             #pragma vertex vert
             #pragma fragment frag

@@ -13,7 +13,7 @@ namespace NorthStar
         [SerializeField] private float m_colliderRadius;
         [SerializeField] private List<Transform> m_fingerRoots = new();
         [SerializeField] private Transform m_wrist;
-        [SerializeField] private PhysicMaterial m_physicMaterial;
+        [SerializeField] private PhysicsMaterial m_physicMaterial;
         private List<CapsuleCollider> m_fingerColliders = new();
 
         public enum Direction { x, y, z }

@@ -12,7 +12,7 @@ namespace NorthStar
 
         protected override void SetupHandRefs()
         {
-            m_bodyPositions = FindObjectOfType<BodyPositions>();
+            m_bodyPositions = FindFirstObjectByType<BodyPositions>();
 
             if (m_bodyPositions is not null && m_grabAnchors.Length == 2)
             {

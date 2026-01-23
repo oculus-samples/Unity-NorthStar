@@ -42,7 +42,9 @@ namespace UnityEngine.Rendering.Universal
     /// <summary>
     /// A volume component that holds settings for the motion blur effect.
     /// </summary>
-    [Serializable, VolumeComponentMenuForRenderPipeline("Post-processing/Motion Blur", typeof(UniversalRenderPipeline))]
+    [Serializable, VolumeComponentMenu("Post-processing/Motion Blur")]
+    [SupportedOnRenderPipeline(typeof(UniversalRenderPipelineAsset))]
+    [URPHelpURL("Post-Processing-Motion-Blur")]
     public sealed class MotionBlur : VolumeComponent, IPostProcessComponent
     {
         /// <summary>
@@ -71,9 +73,10 @@ namespace UnityEngine.Rendering.Universal
         public ClampedFloatParameter clamp = new ClampedFloatParameter(0.05f, 0f, 0.2f);
 
         /// <inheritdoc/>
-        public bool IsActive() => intensity.value > 0f && mode.value == MotionBlurMode.CameraOnly;
+        public bool IsActive() => intensity.value > 0f;
 
         /// <inheritdoc/>
+        [Obsolete("Unused #from(2023.1)", false)]
         public bool IsTileCompatible() => false;
     }
 

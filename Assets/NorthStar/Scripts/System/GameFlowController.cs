@@ -23,7 +23,7 @@ namespace NorthStar
                 if (s_instance == null)
                 {
                     // Try to find an existing instance in the scene
-                    s_instance = FindObjectOfType<GameFlowController>();
+                    s_instance = FindFirstObjectByType<GameFlowController>();
                     if (s_instance == null)
                     {
                         // If none exists, create a new GameObject and attach the component

@@ -199,7 +199,7 @@ namespace NorthStar
 
             AddBooleanCommand("bloom_enabled", (enabled) =>
             {
-                var volumes = UnityEngine.Object.FindObjectsOfType<Volume>();
+                var volumes = UnityEngine.Object.FindObjectsByType<Volume>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
                 foreach (var volume in volumes)
                 {
                     if (volume.profile.TryGet<Bloom>(out var bloom))
@@ -216,12 +216,12 @@ namespace NorthStar
 
             AddFloatCommand("enable_asw_for_duration", (duration) =>
             {
-                UnityEngine.Object.FindObjectOfType<QualityControls>().EnableSpaceWarpForDuration(duration);
+                UnityEngine.Object.FindFirstObjectByType<QualityControls>().EnableSpaceWarpForDuration(duration);
             });
 
             AddBooleanCommand("enable_asw", (enabled) =>
             {
-                var qc = UnityEngine.Object.FindObjectOfType<QualityControls>();
+                var qc = UnityEngine.Object.FindFirstObjectByType<QualityControls>();
                 if (enabled)
                 {
                     qc.EnableSpaceWarp();
@@ -245,8 +245,8 @@ namespace NorthStar
         /// <param name="restoreDefaultVisibilitySet">Whether or not to restore the default visibility set when returning to normal play mode</param>
         private static void UpdateCameras(bool restoreDefaultVisibilitySet = true)
         {
-            var cameraRig = UnityEngine.Object.FindObjectOfType<OVRCameraRig>(true);
-            var profilingCameras = UnityEngine.Object.FindObjectsOfType<ProfilingCamera>(true);
+            var cameraRig = UnityEngine.Object.FindFirstObjectByType<OVRCameraRig>(FindObjectsInactive.Include);
+            var profilingCameras = UnityEngine.Object.FindObjectsByType<ProfilingCamera>(FindObjectsInactive.Include, FindObjectsSortMode.None);
 
             if (s_enabled)
             {

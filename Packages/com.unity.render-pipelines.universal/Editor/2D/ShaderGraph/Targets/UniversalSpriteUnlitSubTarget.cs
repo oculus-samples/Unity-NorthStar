@@ -1,9 +1,7 @@
 using System;
-using System.Linq;
 using System.Collections.Generic;
 using UnityEditor.ShaderGraph;
 using UnityEditor.ShaderGraph.Legacy;
-
 using Unity.Rendering.Universal;
 
 namespace UnityEditor.Rendering.Universal.ShaderGraph
@@ -25,6 +23,14 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         {
             base.Setup(ref context);
             context.AddAssetDependency(kSourceCodeGuid, AssetCollection.Flags.SourceDependency);
+
+            var universalRPType = typeof(UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset);
+            var gui = typeof(ShaderGraphSpriteGUI);
+#if HAS_VFX_GRAPH
+            if (TargetsVFX())
+                gui = typeof(VFXGenericShaderGraphMaterialGUI);
+#endif
+            context.AddCustomEditorForRenderPipeline(gui.FullName, universalRPType);
             context.AddSubShader(PostProcessSubShader(SubShaders.SpriteUnlit(target)));
         }
 
@@ -83,7 +89,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                         // UI shaders to render correctly. Verify [1352225] before changing this order.
                         { CorePasses._2DSceneSelection(target) },
                         { CorePasses._2DScenePicking(target) },
-                        { SpriteUnlitPasses.Forward },
+                        { SpriteUnlitPasses.Forward(target) },
                     },
                 };
                 return result;
@@ -119,9 +125,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     fieldDependencies = CoreFieldDependencies.Default,
 
                     // Conditional State
-                    renderStates = CoreRenderStates.Default,
+                    renderStates = SpriteSubTargetUtility.GetDefaultRenderState(target),
                     pragmas = CorePragmas._2DDefault,
-                    defines = new DefineCollection(),
+                    defines = new DefineCollection() { CoreDefines.UseFragmentFog },
                     keywords = SpriteUnlitKeywords.Unlit,
                     includes = SpriteUnlitIncludes.Unlit,
 
@@ -129,41 +135,53 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     customInterpolators = CoreCustomInterpDescriptors.Common
                 };
 
+                if (target.disableTint)
+                    result.defines.Add(Canvas.ShaderGraph.CanvasSubTarget<Target>.CanvasKeywords.DisableTint, 1);
+
                 SpriteSubTargetUtility.AddAlphaClipControlToPass(ref result, target);
 
                 return result;
             }
 
-            public static PassDescriptor Forward = new PassDescriptor
+            public static PassDescriptor Forward(UniversalTarget target)
             {
-                // Definition
-                displayName = "Sprite Unlit",
-                referenceName = "SHADERPASS_SPRITEFORWARD",
-                lightMode = "UniversalForward",
-                useInPreview = true,
+                var result = new PassDescriptor
+                {
+                    // Definition
+                    displayName = "Sprite Unlit",
+                    referenceName = "SHADERPASS_SPRITEFORWARD",
+                    lightMode = "UniversalForward",
+                    useInPreview = true,
 
-                // Template
-                passTemplatePath = UniversalTarget.kUberTemplatePath,
-                sharedTemplateDirectories = UniversalTarget.kSharedTemplateDirectories,
+                    // Template
+                    passTemplatePath = UniversalTarget.kUberTemplatePath,
+                    sharedTemplateDirectories = UniversalTarget.kSharedTemplateDirectories,
 
-                // Port Mask
-                validVertexBlocks = CoreBlockMasks.Vertex,
-                validPixelBlocks = SpriteUnlitBlockMasks.Fragment,
+                    // Port Mask
+                    validVertexBlocks = CoreBlockMasks.Vertex,
+                    validPixelBlocks = SpriteUnlitBlockMasks.Fragment,
 
-                // Fields
-                structs = CoreStructCollections.Default,
-                requiredFields = SpriteUnlitRequiredFields.Unlit,
-                fieldDependencies = CoreFieldDependencies.Default,
+                    // Fields
+                    structs = CoreStructCollections.Default,
+                    requiredFields = SpriteUnlitRequiredFields.Unlit,
+                    fieldDependencies = CoreFieldDependencies.Default,
 
-                // Conditional State
-                renderStates = CoreRenderStates.Default,
-                pragmas = CorePragmas._2DDefault,
-                keywords = SpriteUnlitKeywords.Unlit,
-                includes = SpriteUnlitIncludes.Unlit,
+                    // Conditional State
+                    renderStates = CoreRenderStates.Default,
+                    pragmas = CorePragmas._2DDefault,
+                    defines = new DefineCollection() { CoreDefines.UseFragmentFog },
+                    keywords = SpriteUnlitKeywords.Unlit,
+                    includes = SpriteUnlitIncludes.Unlit,
 
-                // Custom Interpolator Support
-                customInterpolators = CoreCustomInterpDescriptors.Common
-            };
+                    // Custom Interpolator Support
+                    customInterpolators = CoreCustomInterpDescriptors.Common
+                };
+
+                if (target.disableTint)
+                    result.defines.Add(Canvas.ShaderGraph.CanvasSubTarget<Target>.CanvasKeywords.DisableTint, 1);
+
+                return result;
+            }
         }
         #endregion
 
@@ -190,6 +208,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 StructFields.Varyings.positionWS,
                 StructFields.Varyings.color,
                 StructFields.Varyings.texCoord0,
+                StructFields.Varyings.normalWS,
             };
         }
         #endregion

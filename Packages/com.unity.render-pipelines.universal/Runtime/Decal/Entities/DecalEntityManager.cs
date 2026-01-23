@@ -235,7 +235,7 @@ namespace UnityEngine.Rendering.Universal
             if (material == null)
                 material = errorMaterial;
 
-            using (new ProfilingScope(null, m_AddDecalSampler))
+            using (new ProfilingScope(m_AddDecalSampler))
             {
                 int chunkIndex = CreateChunkIndex(material);
                 int entityIndex = entityChunks[chunkIndex].count;
@@ -250,7 +250,7 @@ namespace UnityEngine.Rendering.Universal
                 // Make sure we have space to add new entity
                 if (entityChunks[chunkIndex].capacity == entityChunks[chunkIndex].count)
                 {
-                    using (new ProfilingScope(null, m_ResizeChunks))
+                    using (new ProfilingScope(m_ResizeChunks))
                     {
                         int newCapacity = entityChunks[chunkIndex].capacity + entityChunks[chunkIndex].capacity;
                         newCapacity = math.max(8, newCapacity);
@@ -283,9 +283,10 @@ namespace UnityEngine.Rendering.Universal
             {
                 var propertyBlock = new MaterialPropertyBlock();
 
-                // In order instanced and non instanced rendering to work with _NormalToWorld
-                // We need to make sure array is created with maximum size
-                propertyBlock.SetMatrixArray("_NormalToWorld", new Matrix4x4[250]);
+                // In order instanced and non instanced rendering to work with _NormalToWorld and _DecalLayerMaskFromDecal
+                // We need to make sure the array are created with maximum size
+                propertyBlock.SetMatrixArray("_NormalToWorld", new Matrix4x4[DecalDrawSystem.MaxBatchSize]);
+                propertyBlock.SetFloatArray("_DecalLayerMaskFromDecal", new float[DecalDrawSystem.MaxBatchSize]);
 
                 entityChunks.Add(new DecalEntityChunk() { material = material });
                 cachedChunks.Add(new DecalCachedChunk()
@@ -404,7 +405,7 @@ namespace UnityEngine.Rendering.Universal
 
         public void Update()
         {
-            using (new ProfilingScope(null, m_SortChunks))
+            using (new ProfilingScope(m_SortChunks))
             {
                 for (int i = 0; i < chunkCount; ++i)
                 {

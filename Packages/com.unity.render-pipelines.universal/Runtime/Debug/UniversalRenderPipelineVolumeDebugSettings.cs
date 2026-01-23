@@ -1,17 +1,10 @@
-using System;
-
 namespace UnityEngine.Rendering.Universal
 {
     /// <summary>
     /// Volume debug settings.
     /// </summary>
-    public class UniversalRenderPipelineVolumeDebugSettings : VolumeDebugSettings<UniversalAdditionalCameraData>
+    public partial class UniversalRenderPipelineVolumeDebugSettings : VolumeDebugSettings<UniversalAdditionalCameraData>
     {
-        /// <summary>
-        /// Specifies the render pipeline for this volume settings
-        /// </summary>
-        public override Type targetRenderPipeline => typeof(UniversalRenderPipeline);
-
         /// <summary>Selected camera volume stack.</summary>
         public override VolumeStack selectedCameraVolumeStack
         {
@@ -34,7 +27,16 @@ namespace UnityEngine.Rendering.Universal
         }
 
         /// <summary>Selected camera volume layer mask.</summary>
-        public override LayerMask selectedCameraLayerMask => selectedCamera != null ? selectedCamera.GetComponent<UniversalAdditionalCameraData>().volumeLayerMask : (LayerMask)0;
+        public override LayerMask selectedCameraLayerMask
+        {
+            get
+            {
+                if (selectedCamera != null && selectedCamera.TryGetComponent<UniversalAdditionalCameraData>(out var selectedAdditionalCameraData))
+                    return selectedAdditionalCameraData.volumeLayerMask;
+
+                return 1; // "Default"
+            }
+        }
 
         /// <summary>Selected camera volume position.</summary>
         public override Vector3 selectedCameraPosition => selectedCamera != null ? selectedCamera.transform.position : Vector3.zero;

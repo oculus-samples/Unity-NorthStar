@@ -7,12 +7,13 @@ Shader "Hidden/Universal Render Pipeline/FallbackError"
             "RenderType" = "Opaque"
             "RenderPipeline" = "UniversalPipeline"
             "IgnoreProjector" = "True"
+            "ShaderModel" = "4.5"
         }
 
         Pass
         {
             HLSLPROGRAM
-            #pragma target 2.0
+            #pragma target 4.5
             #pragma editor_sync_compilation
 
             // -------------------------------------

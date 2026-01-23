@@ -1,7 +1,8 @@
 using System;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering.Universal;
+using UnityEngine.Rendering.Universal;
+
 
 namespace UnityEditor.Rendering.Universal
 {
@@ -14,6 +15,7 @@ namespace UnityEditor.Rendering.Universal
         {
             var go = CreateGameObject("Pixel Perfect Camera", menuCommand, new[] { typeof(PixelPerfectCamera) });
             go.GetComponent<PixelPerfectCamera>().gridSnapping = PixelPerfectCamera.GridSnapping.PixelSnapping;
+            go.GetComponent<Camera>().orthographic = true;
         }
 
         static public GameObject CreateGameObject(string name, MenuCommand menuCommand, params Type[] components)

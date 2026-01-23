@@ -380,6 +380,8 @@ namespace UnityEditor.Rendering.Universal.Path2D
         {
             if (m_GUIState.eventType == EventType.Layout)
                 m_Controller.ClearClosestPath();
+            else if (m_GUIState.eventType == EventType.ValidateCommand)
+                return;
 
             m_RectSelector.OnGUI();
 
@@ -489,11 +491,11 @@ namespace UnityEditor.Rendering.Universal.Path2D
         }
 
         protected abstract IShape GetShape(UnityObject target);
-        protected virtual void Initialize(T path, SerializedObject serializedObject) { }
+        protected virtual void Initialize(T path, SerializedObject serializedObject) {}
         protected abstract void SetShape(T path, SerializedObject serializedObject);
-        protected virtual void OnActivate() { }
-        protected virtual void OnDeactivate() { }
-        protected virtual void OnCustomGUI(T path) { }
+        protected virtual void OnActivate() {}
+        protected virtual void OnDeactivate() {}
+        protected virtual void OnCustomGUI(T path) {}
     }
 }
 #pragma warning restore 0618

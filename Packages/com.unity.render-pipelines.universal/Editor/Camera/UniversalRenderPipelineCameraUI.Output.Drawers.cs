@@ -10,42 +10,47 @@ namespace UnityEditor.Rendering.Universal
     {
         public partial class Output
         {
-            public static readonly CED.IDrawer Drawer = CED.Conditional(
-                (serialized, owner) => (CameraRenderType)serialized.cameraType.intValue == CameraRenderType.Base,
-                CED.FoldoutGroup(
-                    CameraUI.Output.Styles.header,
-                    Expandable.Output,
-                    k_ExpandedState,
-                    FoldoutOption.Indent,
-                    CED.Group(
-                        DrawerOutputTargetTexture
-                        ),
-                    CED.Conditional(
-                        (serialized, owner) => serialized.serializedObject.targetObject is Camera camera && camera.targetTexture == null,
+
+            public static readonly CED.IDrawer Drawer;
+            static Output()
+            {
+                Drawer = CED.Conditional(
+                    (serialized, owner) => (CameraRenderType)serialized.cameraType.intValue == CameraRenderType.Base,
+                    CED.FoldoutGroup(
+                        CameraUI.Output.Styles.header,
+                        Expandable.Output,
+                        k_ExpandedState,
+                        FoldoutOption.Indent,
                         CED.Group(
-                            DrawerOutputMultiDisplay
-                        )
-                        ),
+                            DrawerOutputTargetTexture
+                            ),
+                        CED.Conditional(
+                            (serialized, owner) => serialized.serializedObject.targetObject is Camera camera && camera.targetTexture == null,
+                            CED.Group(
+                                DrawerOutputMultiDisplay
+                            )
+                            ),
 #if ENABLE_VR && ENABLE_XR_MODULE
-                    CED.Group(DrawerOutputXRRendering),
+                        CED.Group(DrawerOutputXRRendering),
 #endif
-                    CED.Group(
-                        DrawerOutputNormalizedViewPort
-                        ),
-                    CED.Conditional(
-                        (serialized, owner) => serialized.serializedObject.targetObject is Camera camera && camera.targetTexture == null,
                         CED.Group(
-                            CED.Group(DrawerOutputHDR),
-                            CED.Conditional(
-                                (serialized, owner) => PlayerSettings.useHDRDisplay,
-                                CED.Group(DrawerOutputHDROutput)
-                                ),
-                            CED.Group(DrawerOutputMSAA),
-                            CED.Group(DrawerOutputAllowDynamicResolution)
+                            DrawerOutputNormalizedViewPort
+                            ),
+                        CED.Conditional(
+                            (serialized, owner) => serialized.serializedObject.targetObject is Camera camera && camera.targetTexture == null,
+                            CED.Group(
+                                CED.Group(DrawerOutputHDR),
+                                CED.Conditional(
+                                    (serialized, owner) => PlayerSettings.allowHDRDisplaySupport,
+                                    CED.Group(DrawerOutputHDROutput)
+                                    ),
+                                CED.Group(DrawerOutputMSAA),
+                                CED.Group(DrawerOutputAllowDynamicResolution)
+                            )
                         )
                     )
-                )
-            );
+                );
+            }
 
             static void DrawerOutputMultiDisplay(UniversalRenderPipelineSerializedCamera p, Editor owner)
             {
@@ -83,7 +88,7 @@ namespace UnityEditor.Rendering.Universal
             {
                 using (var checkScope = new EditorGUI.ChangeCheckScope())
                 {
-                    CameraUI.Output.Drawer_Output_AllowDynamicResolution(p, owner);
+                    CameraUI.Output.Drawer_Output_AllowDynamicResolution(p, owner, Styles.allowDynamicResolution);
                     if (checkScope.changed)
                     {
                         UpdateStackCamerasOutput(p, camera =>
@@ -227,11 +232,11 @@ namespace UnityEditor.Rendering.Universal
                     {
                         int selectedValue = !p.allowHDROutput.boolValue ? 0 : 1;
                         var allowHDROutput = EditorGUI.IntPopup(controlRect, Styles.allowHDROutput, selectedValue, Styles.hdrOuputOptions, Styles.hdrOuputValues) == 1;
-                        
+
                         var rpAsset = UniversalRenderPipeline.asset;
                         bool perCameraHDRDisabled = !p.baseCameraSettings.HDR.boolValue && (rpAsset == null || rpAsset.supportsHDR);
                         
-                        if (allowHDROutput && PlayerSettings.useHDRDisplay && perCameraHDRDisabled)
+                        if (allowHDROutput && PlayerSettings.allowHDRDisplaySupport && perCameraHDRDisabled)
                         {
                             EditorGUILayout.HelpBox(Styles.disabledHDRRenderingWithHDROutput, MessageType.Warning);
                         }

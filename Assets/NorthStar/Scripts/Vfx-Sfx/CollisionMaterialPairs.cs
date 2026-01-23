@@ -18,7 +18,7 @@ namespace NorthStar
         [Serializable]
         private class CollisionPair
         {
-            public PhysicMaterial A, B;
+            public PhysicsMaterial A, B;
             public EffectAsset Effect;
             public AnimationCurve VolumeCurve;
         }
@@ -26,7 +26,7 @@ namespace NorthStar
         [SerializeField] private AnimationCurve m_velocityInstensityCurve;
         [SerializeField] private CollisionPair[] m_collisionPairs;
 
-        public EffectAsset GetEffectLocal(PhysicMaterial a, PhysicMaterial b, out AnimationCurve curve)
+        public EffectAsset GetEffectLocal(PhysicsMaterial a, PhysicsMaterial b, out AnimationCurve curve)
         {
             foreach (var pair in m_collisionPairs)
             {
@@ -64,7 +64,7 @@ namespace NorthStar
                 return s_instance;
             }
         }
-        public static EffectAsset GetEffect(PhysicMaterial a, PhysicMaterial b, out AnimationCurve curve)
+        public static EffectAsset GetEffect(PhysicsMaterial a, PhysicsMaterial b, out AnimationCurve curve)
         {
             return Instance.GetEffectLocal(a, b, out curve);
         }

@@ -23,6 +23,7 @@ Material:
     RenderType: Opaque
   disabledShaderPasses:
   - SHADOWCASTER
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
@@ -245,6 +246,7 @@ Material:
     - _WaterNoiseColor: {r: 0.46925062, g: 0.8962264, b: 0.85791457, a: 1}
     - _Water_Noise_Color: {r: 0.35686272, g: 0.6039216, b: 0.5803921, a: 1}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!114 &3100275174414998426
 MonoBehaviour:
   m_ObjectHideFlags: 11
@@ -257,4 +259,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10

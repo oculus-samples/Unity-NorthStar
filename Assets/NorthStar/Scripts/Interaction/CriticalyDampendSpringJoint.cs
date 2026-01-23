@@ -24,7 +24,7 @@ namespace NorthStar
         {
             if (m_body.isKinematic)
                 return;
-            m_body.velocity = Vector3.ClampMagnitude(m_body.velocity, MaxVelocity);
+            m_body.linearVelocity = Vector3.ClampMagnitude(m_body.linearVelocity, MaxVelocity);
             m_body.AddForce(Vector3.ClampMagnitude(GetForce(), MaxForce), ForceMode.Force);
             m_body.AddTorque(GetAngularForce(), ForceMode.Acceleration);
         }
@@ -32,7 +32,7 @@ namespace NorthStar
         private Vector3 GetForce()
         {
             var toTarget = m_body.position - TargetPoint;
-            return -GetSpringCoef() * PositionSpring * toTarget - GetDampCoef() * PositionDamping * m_body.velocity;
+            return -GetSpringCoef() * PositionSpring * toTarget - GetDampCoef() * PositionDamping * m_body.linearVelocity;
         }
 
         private Vector3 GetAngularForce()

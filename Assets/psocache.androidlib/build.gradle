@@ -14,6 +14,7 @@ buildscript {
 apply plugin: 'com.android.library'
 
 android {
+    namespace 'com.meta.psocache'
     sourceSets {
         main {
             manifest.srcFile 'AndroidManifest.xml'
@@ -22,7 +23,6 @@ android {
         }
     }
 
-    buildToolsVersion "32.0.0"
     compileSdkVersion 32
     defaultConfig {
         targetSdk 33

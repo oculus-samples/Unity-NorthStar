@@ -2,15 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using UnityEditor.SceneManagement;
-using UnityEngine;
 using UnityEditor.Search;
 using UnityEditor.UIElements;
-using UnityEngine.UIElements;
+using UnityEngine;
 using UnityEngine.Assertions;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
-
+using UnityEngine.UIElements;
+using UnityEditor.Rendering.Analytics;
 
 namespace UnityEditor.Rendering.Universal
 {
@@ -61,6 +62,11 @@ namespace UnityEditor.Rendering.Universal
 
         public bool isActiveAndEnabled => isEnabled && isActive;
         public bool requiresInitialization => !isInitialized && isActiveAndEnabled;
+
+        public override string ToString()
+        {
+            return $"Warnings: {warnings} - Errors: {errors} - Ok: {success} - Total: {items?.Count ?? 0}";
+        }
     }
 
     [Serializable]
@@ -148,6 +154,12 @@ namespace UnityEditor.Rendering.Universal
         void OnEnable()
         {
             InitIfNeeded();
+            GraphicsToolLifetimeAnalytic.WindowOpened<RenderPipelineConvertersEditor>();
+        }
+
+        private void OnDisable()
+        {
+            GraphicsToolLifetimeAnalytic.WindowClosed<RenderPipelineConvertersEditor>();
         }
 
         void InitIfNeeded()
@@ -355,6 +367,15 @@ namespace UnityEditor.Rendering.Universal
         }
         void ToggleAllNone(ClickEvent evt, int index, bool value, VisualElement item)
         {
+            void ToggleSelection(Label labelSelected, Label labelNotSelected)
+            {
+                labelSelected.AddToClassList("selected");
+                labelSelected.RemoveFromClassList("not_selected");
+
+                labelNotSelected.AddToClassList("not_selected");
+                labelNotSelected.RemoveFromClassList("selected");
+            }
+
             var conv = m_ConverterStates[index];
             if (conv.items.Count > 0)
             {
@@ -363,22 +384,18 @@ namespace UnityEditor.Rendering.Universal
                     convItem.isActive = value;
                 }
                 UpdateSelectedConverterItems(index, item);
+
+                var allLabel = item.Q<Label>("all");
+                var noneLabel = item.Q<Label>("none");
+
                 // Changing the look of the labels
                 if (value)
                 {
-                    item.Q<Label>("all").AddToClassList("selected");
-                    item.Q<Label>("all").RemoveFromClassList("not_selected");
-
-                    item.Q<Label>("none").AddToClassList("not_selected");
-                    item.Q<Label>("none").RemoveFromClassList("selected");
+                    ToggleSelection(allLabel, noneLabel);
                 }
                 else
                 {
-                    item.Q<Label>("none").AddToClassList("selected");
-                    item.Q<Label>("none").RemoveFromClassList("not_selected");
-
-                    item.Q<Label>("all").AddToClassList("not_selected");
-                    item.Q<Label>("all").RemoveFromClassList("selected");
+                    ToggleSelection(noneLabel, allLabel);
                 }
             }
         }
@@ -862,8 +879,20 @@ namespace UnityEditor.Rendering.Universal
                     ConvertIndex(coreConverterIndex, (int)ve.userData);
                     // Refreshing the list to show the new state
                     m_ConverterSelectedVE.Q<ListView>("converterItems").Rebuild();
+                    LogConverterResult(coreConverterIndex);
                 },
                 isActive ? DropdownMenuAction.AlwaysEnabled : DropdownMenuAction.AlwaysDisabled);
+        }
+
+        void LogConverterResult(int coreConverterIndex)
+        {
+            var converterState = m_ConverterStates[coreConverterIndex];
+            if (converterState.items.Count() > 0)
+            {
+                var sb = new StringBuilder($"Conversion results for item: {m_CoreConvertersList[coreConverterIndex].name}:{Environment.NewLine}");
+                sb.AppendLine(converterState.ToString());
+                Debug.Log(sb);
+            }
         }
 
         void UpdateInfo(int stateIndex, RunItemContext ctx)
@@ -889,10 +918,17 @@ namespace UnityEditor.Rendering.Universal
             child.Q<ListView>("converterItems").Rebuild();
         }
 
+        struct AnalyticContextInfo
+        {
+            public string converter_id;
+            public int items_count;
+        }
+
         void Convert(ClickEvent evt)
         {
             // Ask to save save the current open scene and after the conversion is done reload the same scene.
             if (!SaveCurrentSceneAndContinue()) return;
+
             string currentScenePath = SceneManager.GetActiveScene().path;
 
             List<ConverterState> activeConverterStates = new List<ConverterState>();
@@ -906,6 +942,8 @@ namespace UnityEditor.Rendering.Universal
                 }
             }
 
+            List<AnalyticContextInfo> contextInfo = new ();
+
             int currentCount = 0;
             int activeConvertersCount = activeConverterStates.Count;
             foreach (ConverterState activeConverterState in activeConverterStates)
@@ -915,11 +953,17 @@ namespace UnityEditor.Rendering.Universal
                 m_CoreConvertersList[index].OnPreRun();
                 var converterName = m_CoreConvertersList[index].name;
                 var itemCount = m_ItemsToConvert[index].itemDescriptors.Count;
+                AnalyticContextInfo converterInfo = new ()
+                {
+                    converter_id = converterName,
+                    items_count = 0
+                };
                 string progressTitle = $"{converterName}           Converter : {currentCount}/{activeConvertersCount}";
                 for (var j = 0; j < itemCount; j++)
                 {
                     if (activeConverterState.items[j].isActive)
                     {
+                        converterInfo.items_count++;
                         if (EditorUtility.DisplayCancelableProgressBar(progressTitle,
                             string.Format("({0} of {1}) {2}", j, itemCount, m_ItemsToConvert[index].itemDescriptors[j].info),
                             (float)j / (float)itemCount))
@@ -927,6 +971,10 @@ namespace UnityEditor.Rendering.Universal
                         ConvertIndex(index, j);
                     }
                 }
+
+                LogConverterResult(index);
+
+                contextInfo.Add(converterInfo);
                 m_CoreConvertersList[index].OnPostRun();
                 AssetDatabase.SaveAssets();
                 EditorUtility.ClearProgressBar();
@@ -939,6 +987,8 @@ namespace UnityEditor.Rendering.Universal
             }
 
             RecreateUI();
+
+            GraphicsToolUsageAnalytic.ActionPerformed<RenderPipelineConvertersEditor>(nameof(Convert), contextInfo.ToNestedColumn());
         }
 
         void ConvertIndex(int coreConverterIndex, int index)

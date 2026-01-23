@@ -6,6 +6,8 @@ Shader "Hidden/Universal/HDRDebugView"
     #pragma multi_compile_fragment _ DEBUG_DISPLAY
     #pragma multi_compile_local_fragment _ HDR_ENCODING
 
+    #pragma dynamic_branch_local_fragment _ _HDR_OVERLAY
+
     #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
@@ -14,43 +16,28 @@ Shader "Hidden/Universal/HDRDebugView"
     #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Debug/DebuggingFullscreen.hlsl"
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Debug.hlsl"
     #include "Packages/com.unity.render-pipelines.core/Runtime/Utilities/Blit.hlsl"
-    
-    TEXTURE2D_X(_DebugScreenTexture);
+
     TEXTURE2D_X(_OverlayUITexture);
-    TEXTURE2D_X(_SourceTexture);
     TEXTURE2D(_xyBuffer);
 
     int _DebugHDRMode;
 
-
-    float4 _HDRDebugParams; // xy: brightness min/max, z: paper white brightness, w: color primairies
-    #define _IsRec709 (int)(_HDRDebugParams.w == 0)
-    #define _MinNits    _HDRDebugParams.x
-    #define _MaxNits    _HDRDebugParams.y
-    #define _PaperWhite _HDRDebugParams.z
+    float4 _HDRDebugParams; // xy: xyBuffer size, zw: unused
+    float4 _HDROutputLuminanceParams; // xy: brightness min/max, z: paper white brightness, w: one over paper white brightness
+    #define _MinNits    _HDROutputLuminanceParams.x
+    #define _MaxNits    _HDROutputLuminanceParams.y
+    #define _PaperWhite _HDROutputLuminanceParams.z
 
     float2 RGBtoxy(float3 rgb)
     {
-        float3 XYZ = 0;
-        if (_IsRec709)
-        {
-            XYZ = RotateRec709ToXYZ(rgb);
-        }
-        else
-        {
-            XYZ = RotateRec2020ToXYZ(rgb);
-        }
+        float3 XYZ = RotateOutputSpaceToXYZ(rgb);
         return XYZtoxy(XYZ);
     }
 
     float3 uvToGamut(float2 uv)
     {
         float3 xyzColor = xyYtoXYZ(float3(uv.x, uv.y, 1.0f));
-        float3 linearRGB = RotateXYZToRec2020(xyzColor);
-        if (_IsRec709)
-        {
-            linearRGB = RotateXYZToRec709(xyzColor);
-        }
+        float3 linearRGB = RotateXYZToOutputSpace(xyzColor);
 
         float scale = 1.0f / length(linearRGB);
 
@@ -71,11 +58,17 @@ Shader "Hidden/Universal/HDRDebugView"
     {
         float maxC = max(color.x, max(color.y, color.z));
 
-        float t = (maxC - _PaperWhite) / (_MaxNits - _PaperWhite);
-
         if (maxC > _PaperWhite)
         {
-            return lerp(float3(_PaperWhite, _PaperWhite, 0), float3(_PaperWhite, 0, 0), saturate(t));
+            if ( maxC > _MaxNits)
+            {
+                return float3(0, 0, _PaperWhite);
+            }
+            else
+            {
+                float t = (maxC - _PaperWhite) / (_MaxNits - _PaperWhite);
+                return lerp(float3(_PaperWhite, _PaperWhite, 0), float3(_PaperWhite, 0, 0), saturate(t));
+            }
         }
         else
         {
@@ -102,6 +95,10 @@ Shader "Hidden/Universal/HDRDebugView"
         float2 g_709 = float2(0.3, 0.6);
         float2 b_709 = float2(0.15, 0.06);
 
+        float2 r_p3 = float2(0.68, 0.32);
+        float2 g_p3 = float2(0.265, 0.69);
+        float2 b_p3 = float2(0.15, 0.06);
+
         float2 pos = uv * _ScreenSize.xy;
         float lineThickness = 0.002;
 
@@ -111,6 +108,8 @@ Shader "Hidden/Universal/HDRDebugView"
         float3 rec2020ColorDesat = float3(3.0, 0.5, 0.5);
         float3 rec709Color = float3(0, _PaperWhite, 0);
         float3 rec709ColorDesat = float3(0.4, 0.6, 0.4);
+        float3 p3Color = float3(0, 0, _PaperWhite);
+        float3 p3ColorDesat = float3(0.4, 0.4, 0.6);
 
         //Display Gamut Clip Scene colour conversion
         if (displayClip)
@@ -119,6 +118,10 @@ Shader "Hidden/Universal/HDRDebugView"
             if (IsPointInTriangle(xy, r_709, g_709, b_709))
             {
                 color.rgb = (color.rgb * (1 - clipAlpha) + clipAlpha * rec709Color);
+            }
+            else if (IsPointInTriangle(xy, r_p3, g_p3, b_p3))
+            {
+                color.rgb = (color.rgb * (1 - clipAlpha) + clipAlpha * p3Color);
             }
             else if (IsPointInTriangle(xy, r_2020, g_2020, b_2020))
             {
@@ -134,23 +137,32 @@ Shader "Hidden/Universal/HDRDebugView"
             float4 lineColor = DrawSegment(uv, g_709, b_709, lineThickness, float3(0, 0, 0)) + DrawSegment(uv, b_709, r_709, lineThickness, float3(0, 0, 0)) +
                 DrawSegment(uv, r_709, g_709, lineThickness, float3(0, 0, 0)) +
                 DrawSegment(uv, g_2020, b_2020, lineThickness, float3(0, 0, 0)) + DrawSegment(uv, b_2020, r_2020, lineThickness, float3(0, 0, 0)) +
-                DrawSegment(uv, r_2020, g_2020, lineThickness, float3(0, 0, 0));
+                DrawSegment(uv, r_2020, g_2020, lineThickness, float3(0, 0, 0)) +
+                DrawSegment(uv, g_p3, b_p3, lineThickness, float3(0, 0, 0)) + DrawSegment(uv, b_p3, r_p3, lineThickness, float3(0, 0, 0)) +
+                DrawSegment(uv, r_p3, g_p3, lineThickness, float3(0, 0, 0));
 
             float3 linearRGB = 0;
             bool pointInRec709 = true;
             if (IsPointInTriangle(uv, r_2020, g_2020, b_2020))
             {
+                float3 colorSpaceColor = rec709Color;
                 linearRGB = uvToGamut(uv);
 
                 if (displayClip)
                 {
                     if (IsPointInTriangle(uv, r_709, g_709, b_709))
                     {
+                        colorSpaceColor = rec709Color;
                         linearRGB.rgb = rec709ColorDesat;
+                    }
+                    else if (IsPointInTriangle(uv, r_p3, g_p3, b_p3))
+                    {
+                        colorSpaceColor = p3Color;
+                        linearRGB.rgb = p3ColorDesat;
                     }
                     else
                     {
-                        pointInRec709 = false;
+                        colorSpaceColor = rec2020Color;
                         linearRGB.rgb = rec2020ColorDesat;
                     }
                 }
@@ -162,7 +174,7 @@ Shader "Hidden/Universal/HDRDebugView"
                 {
                     gamutColor.a = 1;
                     if (displayClip)
-                        gamutColor.rgb = pointInRec709 ? rec709Color : rec2020Color;
+                        gamutColor.rgb = colorSpaceColor;
                 }
             }
 
@@ -196,7 +208,7 @@ Shader "Hidden/Universal/HDRDebugView"
 
                 half4 Frag(Varyings input) : SV_Target
                 {
-                    float4 col = SAMPLE_TEXTURE2D_X(_DebugScreenTexture, sampler_PointClamp, input.texcoord);
+                    float4 col = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_PointClamp, input.texcoord);
                     float2 xy = (RGBtoxy(col.rgb));
 
                     _xyBufferRW[(xy * _SizePerDim)] = 1;
@@ -216,19 +228,23 @@ Shader "Hidden/Universal/HDRDebugView"
             HLSLPROGRAM
                 #pragma vertex Vert
                 #pragma fragment Frag
-                
+
                 half4 Frag(Varyings input) : SV_Target
                 {
                     float4 outCol = 0;
                     float2 uv = input.texcoord;
-                    half4 col = SAMPLE_TEXTURE2D_X(_SourceTexture, sampler_PointClamp, uv);
+                    half4 col = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_PointClamp, uv);
                     half4 outColor = 0;
                     RenderDebugHDR(col, uv, outColor);
 
 #if defined(HDR_ENCODING)
-                    float4 uiSample = SAMPLE_TEXTURE2D_X(_OverlayUITexture, sampler_PointClamp, input.texcoord);
-                    outColor.rgb = SceneUIComposition(uiSample, outColor.rgb, _PaperWhite, _MaxNits);
-                    outColor.rgb = OETF(outColor.rgb);
+                    UNITY_BRANCH if(_HDR_OVERLAY)
+                    {
+                        float4 uiSample = SAMPLE_TEXTURE2D_X(_OverlayUITexture, sampler_PointClamp, input.texcoord);
+                        outColor.rgb = SceneUIComposition(uiSample, outColor.rgb, _PaperWhite, _MaxNits);
+                    }
+
+                    outColor.rgb = OETF(outColor.rgb, _MaxNits);
 #endif
 
 #if defined(DEBUG_DISPLAY)

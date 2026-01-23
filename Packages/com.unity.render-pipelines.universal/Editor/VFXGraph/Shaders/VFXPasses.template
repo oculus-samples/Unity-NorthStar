@@ -17,7 +17,10 @@ ${VFXBegin:VFXPassVelocityDefine}#define SHADERPASS SHADERPASS_MOTION_VECTORS${V
 
 ${VFXBegin:VFXPassForwardAdditionalPragma}
 #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
+#pragma multi_compile _ DEBUG_DISPLAY
 #pragma multi_compile_fog
+#include_with_pragmas "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRenderingKeywords.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Debug/Debugging3D.hlsl"
 ${VFXEnd}
 
 ${VFXBegin:VFXPassForwardLitAdditionalPragma}
@@ -26,11 +29,13 @@ ${VFXBegin:VFXPassForwardLitAdditionalPragma}
 #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
 #pragma multi_compile_fragment _ _REFLECTION_PROBE_BLENDING
 #pragma multi_compile_fragment _ _REFLECTION_PROBE_BOX_PROJECTION
-#pragma multi_compile_fragment _ _SHADOWS_SOFT
+#pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
 #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
-#pragma multi_compile_fragment _ _LIGHT_LAYERS
 #pragma multi_compile_fragment _ _LIGHT_COOKIES
+#pragma multi_compile _ _LIGHT_LAYERS
 #pragma multi_compile _ _FORWARD_PLUS
+#include_with_pragmas "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRenderingKeywords.hlsl"
+#include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ProbeVolumeVariants.hlsl"
 #pragma multi_compile_fog
 #pragma multi_compile _ DEBUG_DISPLAY
 ${VFXEnd}
@@ -42,10 +47,12 @@ ${VFXBegin:VFXPassGBufferAdditionalPragma}
 #pragma multi_compile_fragment _ _REFLECTION_PROBE_BOX_PROJECTION
 #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
 #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+#pragma multi_compile_fragment _ _RENDER_PASS_ENABLED
+#include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ProbeVolumeVariants.hlsl"
 //See Lit.shader, these multi_compile aren't used in GBuffer
 //#pragma multi_compile _ _ADDITIONAL_LIGHTS
 //#pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
-#pragma multi_compile_fragment _ _SHADOWS_SOFT
+#pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
 #include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/RenderingLayers.hlsl"
 ${VFXEnd}
 
@@ -56,6 +63,8 @@ ${VFXBegin:VFXShaderGraphFunctionsInclude}
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/EntityLighting.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderGraphFunctions.hlsl"
+#include_with_pragmas "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRenderingKeywords.hlsl"
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRendering.hlsl"
 ${VFXEnd}
 
 
@@ -87,7 +96,9 @@ void frag(ps_input i
 #if USE_DOUBLE_SIDED
     , bool frontFace : SV_IsFrontFace
 #endif
-#if VFX_PASSDEPTH == VFX_PASSDEPTH_ACTUAL
+#if VFX_PASSDEPTH == VFX_PASSDEPTH_MOTION_VECTOR
+    , out float4 outMotionVector : SV_Target0
+#elif VFX_PASSDEPTH == VFX_PASSDEPTH_ACTUAL
     #if defined(WRITE_NORMAL_BUFFER)
     , out float4 outNormalBuffer : SV_Target0
     , out float4 outDepthColor : SV_Target1
@@ -113,11 +124,21 @@ void frag(ps_input i
         #endif
 
         float alpha = OUTSG.${SHADERGRAPH_PARAM_ALPHA};
-        #else
+    #else
 
         float alpha = VFXGetFragmentColor(i).a;
         #if URP_USE_BASE_COLOR_MAP_ALPHA
             alpha *= VFXGetTextureColor(VFX_SAMPLER(baseColorMap),i).a;
+        #endif
+
+         #if VFX_MATERIAL_TYPE_SIX_WAY_SMOKE
+            #ifndef VFX_VARYING_NORMAL
+			    const VFXUVData uvData = GetUVData(i);
+		    #endif
+            alpha *= SampleTexture(VFX_SAMPLER(positiveAxesLightmap),uvData).a;
+            #if defined(VFX_VARYING_ALPHA_REMAP)
+                alpha = SampleCurve(i.VFX_VARYING_ALPHA_REMAP, alpha);
+            #endif
         #endif
     #endif
 
@@ -130,10 +151,13 @@ void frag(ps_input i
                 normalWS = mul(n,tbn);
             #endif
         #endif
-        VFXComputePixelOutputToNormalBuffer(i, normalWS, GetUVData(i), outNormalBuffer);
+		VFXComputePixelOutputToNormalBuffer(i, normalWS, GetUVData(i), outNormalBuffer);
     #endif
 
-    #if VFX_PASSDEPTH == VFX_PASSDEPTH_SELECTION
+    #if VFX_PASSDEPTH == VFX_PASSDEPTH_MOTION_VECTOR
+        ${VFXComputeOutputMotionVector}
+        outMotionVector = encodedMotionVector;
+    #elif VFX_PASSDEPTH == VFX_PASSDEPTH_SELECTION
         // We use depth prepass for scene selection in the editor, this code allow to output the outline correctly
         outColor = float4(_ObjectId, _PassValue, 1.0, 1.0);
     #elif VFX_PASSDEPTH == VFX_PASSDEPTH_PICKING
@@ -146,4 +170,21 @@ void frag(ps_input i
         #error VFX_PASSDEPTH undefined
     #endif
 }
+${VFXEnd}
+
+${VFXBegin:VFXUnlitDebugDisplay}
+#if defined(DEBUG_DISPLAY)
+    InputData inputData;
+    SurfaceData surfaceData;
+    ZERO_INITIALIZE(SurfaceData, surfaceData);
+    ZERO_INITIALIZE(InputData, inputData);
+    surfaceData.albedo = o.color.rgb;
+    surfaceData.alpha = o.color.a;
+
+    half4 debugColor;
+    if (CanDebugOverrideOutputColor(inputData, surfaceData, debugColor))
+    {
+        o.color = debugColor;
+    }
+#endif
 ${VFXEnd}

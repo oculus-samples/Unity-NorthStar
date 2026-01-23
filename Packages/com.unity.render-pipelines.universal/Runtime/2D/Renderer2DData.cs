@@ -14,8 +14,8 @@ namespace UnityEngine.Rendering.Universal
     /// Class <c>Renderer2DData</c> contains resources for a <c>Renderer2D</c>.
     /// </summary>
     [Serializable, ReloadGroup, ExcludeFromPreset]
-    [MovedFrom("UnityEngine.Experimental.Rendering.Universal")]
-    [HelpURL("https://docs.unity3d.com/Packages/com.unity.render-pipelines.universal@latest/index.html?subfolder=/manual/2DRendererData_overview.html")]
+    [MovedFrom(true, "UnityEngine.Experimental.Rendering.Universal", "Unity.RenderPipelines.Universal.Runtime")]
+    [HelpURL("https://docs.unity3d.com/Packages/com.unity.render-pipelines.universal@latest/index.html?subfolder=/manual/2DRendererData-overview.html")]
     public partial class Renderer2DData : ScriptableRendererData
     {
         internal enum Renderer2DDefaultMaterialType
@@ -24,6 +24,9 @@ namespace UnityEngine.Rendering.Universal
             Unlit,
             Custom
         }
+
+        [SerializeField]
+        LayerMask m_LayerMask = -1;
 
         [SerializeField]
         TransparencySortMode m_TransparencySortMode = TransparencySortMode.Default;
@@ -58,51 +61,8 @@ namespace UnityEngine.Rendering.Universal
         [SerializeField]
         uint m_MaxShadowRenderTextureCount = 1;
 
-        [SerializeField, Reload("Shaders/2D/Light2D-Shape.shader")]
-        Shader m_ShapeLightShader = null;
-
-        [SerializeField, Reload("Shaders/2D/Light2D-Shape-Volumetric.shader")]
-        Shader m_ShapeLightVolumeShader = null;
-
-        [SerializeField, Reload("Shaders/2D/Light2D-Point.shader")]
-        Shader m_PointLightShader = null;
-
-        [SerializeField, Reload("Shaders/2D/Light2D-Point-Volumetric.shader")]
-        Shader m_PointLightVolumeShader = null;
-
-        [SerializeField, Reload("Shaders/Utils/CoreBlit.shader")]
-        Shader m_CoreBlitShader = null;
-        
-        [SerializeField, Reload("Shaders/Utils/BlitHDROverlay.shader")]
-        Shader m_BlitHDROverlay;
-
-        [SerializeField, Reload("Shaders/Utils/CoreBlitColorAndDepth.shader")]
-        Shader m_CoreBlitColorAndDepthPS = null;
-
-        [SerializeField, Reload("Shaders/Utils/Sampling.shader")]
-        Shader m_SamplingShader = null;
-
-        [SerializeField, Reload("Shaders/2D/Shadow2D-Projected.shader")]
-        Shader m_ProjectedShadowShader = null;
-
-        [SerializeField, Reload("Shaders/2D/Shadow2D-Shadow-Sprite.shader")]
-        Shader m_SpriteShadowShader = null;
-
-        [SerializeField, Reload("Shaders/2D/Shadow2D-Unshadow-Sprite.shader")]
-        Shader m_SpriteUnshadowShader = null;
-
-        [SerializeField, Reload("Shaders/2D/Shadow2D-Unshadow-Geometry.shader")]
-        Shader m_GeometryUnshadowShader = null;
-
-        [SerializeField, Reload("Shaders/Utils/FallbackError.shader")]
-        Shader m_FallbackErrorShader;
-
         [SerializeField]
         PostProcessData m_PostProcessData = null;
-
-        [SerializeField, Reload("Runtime/2D/Data/Textures/FalloffLookupTexture.png")]
-        [HideInInspector]
-        private Texture2D m_FallOffLookup = null;
 
         /// <summary>
         /// HDR Emulation Scale allows platforms to use HDR lighting by compressing the number of expressible colors in exchange for extra intensity range.
@@ -115,22 +75,7 @@ namespace UnityEngine.Rendering.Universal
         /// </summary>
         public Light2DBlendStyle[] lightBlendStyles => m_LightBlendStyles;
         internal bool useDepthStencilBuffer => m_UseDepthStencilBuffer;
-        internal Texture2D fallOffLookup => m_FallOffLookup;
-        internal Shader shapeLightShader => m_ShapeLightShader;
-        internal Shader shapeLightVolumeShader => m_ShapeLightVolumeShader;
-        internal Shader pointLightShader => m_PointLightShader;
-        internal Shader pointLightVolumeShader => m_PointLightVolumeShader;
-        internal Shader blitShader => m_CoreBlitShader;
-        internal Shader blitHDROverlay => m_BlitHDROverlay;
-        internal Shader coreBlitPS => m_CoreBlitShader;
-        internal Shader coreBlitColorAndDepthPS => m_CoreBlitColorAndDepthPS;
-        internal Shader samplingShader => m_SamplingShader;
         internal PostProcessData postProcessData { get => m_PostProcessData; set { m_PostProcessData = value; } }
-        internal Shader spriteShadowShader => m_SpriteShadowShader;
-        internal Shader spriteUnshadowShader => m_SpriteUnshadowShader;
-        internal Shader geometryUnshadowShader => m_GeometryUnshadowShader;
-
-        internal Shader projectedShadowShader => m_ProjectedShadowShader;
         internal TransparencySortMode transparencySortMode => m_TransparencySortMode;
         internal Vector3 transparencySortAxis => m_TransparencySortAxis;
         internal uint lightRenderTextureMemoryBudget => m_MaxLightRenderTextureCount;
@@ -138,6 +83,7 @@ namespace UnityEngine.Rendering.Universal
         internal bool useCameraSortingLayerTexture => m_UseCameraSortingLayersTexture;
         internal int cameraSortingLayerTextureBound => m_CameraSortingLayersTextureBound;
         internal Downsampling cameraSortingLayerDownsamplingMethod => m_CameraSortingLayerDownsamplingMethod;
+        internal LayerMask layerMask => m_LayerMask;
 
         /// <summary>
         /// Creates the instance of the Renderer2D.
@@ -151,7 +97,26 @@ namespace UnityEngine.Rendering.Universal
                 ReloadAllNullProperties();
             }
 #endif
+
             return new Renderer2D(this);
+        }
+
+        internal void Dispose()
+        {
+            for (var i = 0; i < m_LightBlendStyles.Length; ++i)
+                m_LightBlendStyles[i].renderTargetHandle?.Release();
+
+            foreach(var mat in lightMaterials)
+                CoreUtils.Destroy(mat.Value);
+
+            lightMaterials.Clear();
+
+            CoreUtils.Destroy(spriteSelfShadowMaterial);
+            CoreUtils.Destroy(spriteUnshadowMaterial);
+            CoreUtils.Destroy(geometrySelfShadowMaterial);
+            CoreUtils.Destroy(geometryUnshadowMaterial);
+            CoreUtils.Destroy(projectedShadowMaterial);
+            CoreUtils.Destroy(projectedUnshadowMaterial);
         }
 
         /// <summary>
@@ -167,36 +132,26 @@ namespace UnityEngine.Rendering.Universal
                 m_LightBlendStyles[i].renderTargetHandle = RTHandles.Alloc(m_LightBlendStyles[i].renderTargetHandleId, $"_ShapeLightTexture{i}");
             }
 
-            normalsRenderTargetId = Shader.PropertyToID("_NormalMap");
-            normalsRenderTarget = RTHandles.Alloc(normalsRenderTargetId, "_NormalMap");
-            shadowsRenderTargetId = Shader.PropertyToID("_ShadowTex");
-            shadowsRenderTarget = RTHandles.Alloc(shadowsRenderTargetId, "_ShadowTex");
-            cameraSortingLayerRenderTargetId = Shader.PropertyToID("_CameraSortingLayerTexture");
-            cameraSortingLayerRenderTarget = RTHandles.Alloc(cameraSortingLayerRenderTargetId, "_CameraSortingLayerTexture");
+            geometrySelfShadowMaterial = null;
+            geometryUnshadowMaterial = null;
 
             spriteSelfShadowMaterial = null;
             spriteUnshadowMaterial = null;
             projectedShadowMaterial = null;
-            stencilOnlyShadowMaterial = null;
+            projectedUnshadowMaterial = null;
         }
 
         // transient data
         internal Dictionary<uint, Material> lightMaterials { get; } = new Dictionary<uint, Material>();
-        internal Material[] spriteSelfShadowMaterial { get; set; }
-        internal Material[] spriteUnshadowMaterial { get; set; }
-        internal Material[] geometryUnshadowMaterial { get; set; }
+        internal Material spriteSelfShadowMaterial { get; set; }
+        internal Material spriteUnshadowMaterial { get; set; }
+        internal Material geometrySelfShadowMaterial { get; set; }
+        internal Material geometryUnshadowMaterial { get; set; }
+        internal Material projectedShadowMaterial { get; set; }
+        internal Material projectedUnshadowMaterial { get; set; }
 
-        internal Material[] projectedShadowMaterial { get; set; }
-        internal Material[] stencilOnlyShadowMaterial { get; set; }
-
-        internal bool isNormalsRenderTargetValid { get; set; }
-        internal float normalsRenderTargetScale { get; set; }
         internal RTHandle normalsRenderTarget;
-        internal int normalsRenderTargetId;
-        internal RTHandle shadowsRenderTarget;
-        internal int shadowsRenderTargetId;
         internal RTHandle cameraSortingLayerRenderTarget;
-        internal int cameraSortingLayerRenderTargetId;
 
         // this shouldn've been in RenderingData along with other cull results
         internal ILight2DCullResult lightCullResult { get; set; }

@@ -13,6 +13,9 @@ namespace UnityEditor.Rendering.Universal
             public static readonly GUIContent lightBlendStylesHeader = EditorGUIUtility.TrTextContent("Light Blend Styles", "A Light Blend Style is a collection of properties that describe a particular way of applying lighting.");
             public static readonly GUIContent postProcessHeader = EditorGUIUtility.TrTextContent("Post-processing");
 
+            public static readonly GUIContent filteringSectionLabel = EditorGUIUtility.TrTextContent("Filtering", "Settings that controls and define which layers the renderer draws.");
+            public static readonly GUIContent layerMask = EditorGUIUtility.TrTextContent("Layer Mask", "Controls which transparent layers this renderer draws.");
+
             public static readonly GUIContent transparencySortMode = EditorGUIUtility.TrTextContent("Transparency Sort Mode", "Default sorting mode used for transparent objects");
             public static readonly GUIContent transparencySortAxis = EditorGUIUtility.TrTextContent("Transparency Sort Axis", "Axis used for custom axis sorting mode");
             public static readonly GUIContent hdrEmulationScale = EditorGUIUtility.TrTextContent("HDR Emulation Scale", "Describes the scaling used by lighting to remap dynamic range between LDR and HDR");
@@ -43,6 +46,7 @@ namespace UnityEditor.Rendering.Universal
             public SerializedProperty blendFactorAdditive;
         }
 
+        SerializedProperty m_LayerMask;
         SerializedProperty m_TransparencySortMode;
         SerializedProperty m_TransparencySortAxis;
         SerializedProperty m_HDREmulationScale;
@@ -60,6 +64,7 @@ namespace UnityEditor.Rendering.Universal
         SerializedProperty m_CameraSortingLayersTextureBound;
         SerializedProperty m_CameraSortingLayerDownsamplingMethod;
 
+        SavedBool m_FilteringFoldout;
         SavedBool m_GeneralFoldout;
         SavedBool m_LightRenderTexturesFoldout;
         SavedBool m_LightBlendStylesFoldout;
@@ -74,12 +79,8 @@ namespace UnityEditor.Rendering.Universal
         {
             if (m_WasModified)
             {
-                Analytics.RendererAssetData modifiedData = new Analytics.RendererAssetData();
-                modifiedData.instance_id = m_Renderer2DData.GetInstanceID();
-                modifiedData.was_create_event = false;
-                modifiedData.blending_layers_count = 0;
-                modifiedData.blending_modes_used = 0;
-                analytics.SendData(Analytics.AnalyticsDataTypes.k_Renderer2DDataString, modifiedData);
+                Analytics.RenderAssetAnalytic modifiedData = new Analytics.RenderAssetAnalytic(m_Renderer2DData.GetInstanceID(), false, 0, 0);
+                analytics.SendData(modifiedData);
             }
         }
 
@@ -88,6 +89,7 @@ namespace UnityEditor.Rendering.Universal
             m_WasModified = false;
             m_Renderer2DData = (Renderer2DData)serializedObject.targetObject;
 
+            m_LayerMask = serializedObject.FindProperty("m_LayerMask");
             m_TransparencySortMode = serializedObject.FindProperty("m_TransparencySortMode");
             m_TransparencySortAxis = serializedObject.FindProperty("m_TransparencySortAxis");
             m_HDREmulationScale = serializedObject.FindProperty("m_HDREmulationScale");
@@ -125,6 +127,7 @@ namespace UnityEditor.Rendering.Universal
             m_DefaultMaterialType = serializedObject.FindProperty("m_DefaultMaterialType");
             m_DefaultCustomMaterial = serializedObject.FindProperty("m_DefaultCustomMaterial");
 
+            m_FilteringFoldout = new SavedBool($"{target.GetType()}.FilteringFoldout", true);
             m_GeneralFoldout = new SavedBool($"{target.GetType()}.GeneralFoldout", true);
             m_LightRenderTexturesFoldout = new SavedBool($"{target.GetType()}.LightRenderTexturesFoldout", true);
             m_LightBlendStylesFoldout = new SavedBool($"{target.GetType()}.LightBlendStylesFoldout", true);
@@ -141,6 +144,7 @@ namespace UnityEditor.Rendering.Universal
         {
             serializedObject.Update();
 
+            DrawFiltering();
             DrawGeneral();
             DrawLightRenderTextures();
             DrawLightBlendStyles();
@@ -186,6 +190,18 @@ namespace UnityEditor.Rendering.Universal
             EditorGUI.BeginDisabledGroup(!m_UseCameraSortingLayersTexture.boolValue);
             EditorGUILayout.PropertyField(m_CameraSortingLayerDownsamplingMethod, Styles.cameraSortingLayerDownsampling);
             EditorGUI.EndDisabledGroup();
+        }
+
+        private void DrawFiltering()
+        {
+            CoreEditorUtils.DrawSplitter();
+            m_FilteringFoldout.value = CoreEditorUtils.DrawHeaderFoldout(Styles.filteringSectionLabel, m_FilteringFoldout.value);
+            if (!m_FilteringFoldout.value)
+                return;
+
+            EditorGUILayout.PropertyField(m_LayerMask, Styles.layerMask);
+
+            EditorGUILayout.Space();
         }
 
         private void DrawGeneral()

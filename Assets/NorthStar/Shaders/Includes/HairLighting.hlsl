@@ -133,10 +133,14 @@ void HairLighting_float(float3 position, float3 N, float3 T, float3 V, float3 al
     
 		float perceptualRoughness = 1.0 - smoothness;
 		float roughness = perceptualRoughness * perceptualRoughness;
+
+		float4 positionCS = TransformWorldToHClip(position);
+		float2 positionNDC = positionCS.xy / max(positionCS.w, 0.0001); // NDC: [-1, 1] - Prevent division by zero
+		float2 positionSS = saturate(positionNDC * 0.5 + 0.5);          // Screen space: [0, 1] - Clamp to valid range
 	
 		// Indirect Light
 		float3 fakeN = normalize(V - T * dot(V, T));
-		color = SHADERGRAPH_BAKED_GI(position, fakeN, 0.0, 0.0, false) * CalculateLighting(albedo, roughness, fakeN, V, N, T, true, shift) * occlusion;
+		color = SHADERGRAPH_BAKED_GI(position, fakeN, positionSS, 0.0, 0.0, false) * CalculateLighting(albedo, roughness, fakeN, V, N, T, true, shift) * occlusion;
 	
 		// Direct light
 		color += CalculateLighting(albedo, roughness, mainLight.direction, V, N, T, false, shift) * mainLight.color * mainLight.shadowAttenuation * ComputeMicroShadowing(occlusion, dot(N, mainLight.direction), microShadow);

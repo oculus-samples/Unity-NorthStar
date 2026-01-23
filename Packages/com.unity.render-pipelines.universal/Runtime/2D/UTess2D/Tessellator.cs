@@ -6,11 +6,9 @@ using Unity.Collections.LowLevel.Unsafe;
 
 namespace UnityEngine.Rendering.Universal.UTess
 {
-
     // Constrained Delaunay Triangulation.
     struct Tessellator
     {
-
         // For Processing.
         NativeArray<int2> m_Edges;
         NativeArray<UStar> m_Stars;
@@ -295,7 +293,6 @@ namespace UnityEngine.Rendering.Universal.UTess
                 m_Stars[b] = sb;
                 m_Stars[c] = sc;
             }
-
         }
 
         int OppositeOf(int a, int b)
@@ -438,7 +435,6 @@ namespace UnityEngine.Rendering.Universal.UTess
 
         internal bool ApplyDelaunay(NativeArray<float2> points, NativeArray<int2> edges)
         {
-
             // Early out if cannot find any valid cells.
             if (0 == m_CellCount)
                 return false;
@@ -825,26 +821,25 @@ namespace UnityEngine.Rendering.Universal.UTess
 
             for (int i = 0, numEvents = eventCount; i < numEvents; ++i)
             {
-
                 switch (events[i].type)
                 {
-                    case (int) UEventType.EVENT_POINT:
+                    case (int)UEventType.EVENT_POINT:
                     {
                         hullOp = AddPoint(hulls, hullCount, points, events[i].a, events[i].idx);
                     }
-                        break;
+                    break;
 
-                    case (int) UEventType.EVENT_START:
+                    case (int)UEventType.EVENT_START:
                     {
                         hullOp = SplitHulls(hulls, ref hullCount, points, events[i]);
                     }
-                        break;
+                    break;
 
                     default:
                     {
                         hullOp = MergeHulls(hulls, ref hullCount, points, events[i]);
                     }
-                        break;
+                    break;
                 }
 
                 if (!hullOp)
@@ -906,7 +901,5 @@ namespace UnityEngine.Rendering.Universal.UTess
             if (m_Neighbors.IsCreated) m_Neighbors.Dispose();
             if (m_Constraints.IsCreated) m_Constraints.Dispose();
         }
-
     }
-
 }

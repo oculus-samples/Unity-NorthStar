@@ -218,7 +218,7 @@ namespace NorthStar
         public void CatalogueMeshAttributes()
         {
             // Find all currently loaded MeshFilters
-            var allMeshFilters = FindObjectsOfType<MeshFilter>(true);
+            var allMeshFilters = FindObjectsByType<MeshFilter>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             var allVertDescriptors = new Dictionary<MeshDescriptor, (int Count, HashSet<Mesh> Meshes, HashSet<Shader> Shaders, HashSet<string> Names)>();
             foreach (var meshFilter in allMeshFilters)
             {

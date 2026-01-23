@@ -9,6 +9,7 @@ CBUFFER_START(UnityPerMaterial)
 float4 _SoftParticleFadeParams;
 float4 _CameraFadeParams;
 float4 _BaseMap_ST;
+float4 _BaseMap_TexelSize;
 half4 _BaseColor;
 half4 _EmissionColor;
 half4 _BaseColorAddSubDiff;
@@ -21,7 +22,7 @@ half _DistortionBlend;
 half _Surface;
 CBUFFER_END
 
-#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Particles.hlsl"
+#include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Particles.hlsl"
 
 TEXTURE2D(_MetallicGlossMap);   SAMPLER(sampler_MetallicGlossMap);
 

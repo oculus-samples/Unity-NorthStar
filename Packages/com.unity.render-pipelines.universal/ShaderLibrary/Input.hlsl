@@ -1,5 +1,9 @@
 #ifndef UNIVERSAL_INPUT_INCLUDED
 #define UNIVERSAL_INPUT_INCLUDED
+// URP package specific shader input variables and defines.
+// Unity Engine specific built-in shader input variables are defined in .universal/ShaderLibrary/UnityInput.hlsl
+
+#include "Packages/com.unity.render-pipelines.universal-config/Runtime/ShaderConfig.cs.hlsl"
 
 #define MAX_VISIBLE_LIGHTS_UBO  32
 #define MAX_VISIBLE_LIGHTS_SSBO 256
@@ -11,12 +15,13 @@
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Deprecated.hlsl"
 
 // Must match: UniversalRenderPipeline.maxVisibleAdditionalLights
-#if defined(SHADER_API_MOBILE) && (defined(SHADER_API_GLES) || defined(SHADER_API_GLES30))
-    #define MAX_VISIBLE_LIGHTS 16
-#elif defined(SHADER_API_MOBILE) || (defined(SHADER_API_GLCORE) && !defined(SHADER_API_SWITCH)) || defined(SHADER_API_GLES) || defined(SHADER_API_GLES3) // Workaround because SHADER_API_GLCORE is also defined when SHADER_API_SWITCH is
-    #define MAX_VISIBLE_LIGHTS 32
+#if defined(SHADER_API_MOBILE) && defined(SHADER_API_GLES30)
+    #define MAX_VISIBLE_LIGHTS MAX_VISIBLE_LIGHT_COUNT_LOW_END_MOBILE
+// WebGPU's minimal limits are based on mobile rather than desktop, so it will need to assume mobile.
+#elif defined(SHADER_API_MOBILE) || (defined(SHADER_API_GLCORE) && !defined(SHADER_API_SWITCH) && !defined(SHADER_API_SWITCH2)) || defined(SHADER_API_GLES3) || defined(SHADER_API_WEBGPU) // Workaround because SHADER_API_GLCORE is also defined when SHADER_API_SWITCH is
+    #define MAX_VISIBLE_LIGHTS MAX_VISIBLE_LIGHT_COUNT_MOBILE
 #else
-    #define MAX_VISIBLE_LIGHTS 256
+    #define MAX_VISIBLE_LIGHTS MAX_VISIBLE_LIGHT_COUNT_DESKTOP
 #endif
 
 // Match with values in UniversalRenderPipeline.cs
@@ -49,13 +54,15 @@ struct InputData
     half4   shadowMask;
     half3x3 tangentToWorld;
 
-    #if defined(DEBUG_DISPLAY)
+#if defined(DEBUG_DISPLAY)
     half2   dynamicLightmapUV;
     half2   staticLightmapUV;
     float3  vertexSH;
 
     half3 brdfDiffuse;
     half3 brdfSpecular;
+
+    // Mipmap Streaming Debug
     float2 uv;
     uint mipCount;
 
@@ -72,7 +79,18 @@ struct InputData
     // z = desired on screen mip level
     // w = loaded mip level
     float4 mipInfo;
-    #endif
+
+    // streamInfo :
+    // x = streaming priority
+    // y = time stamp of the latest texture upload
+    // z = streaming status
+    // w = 0
+    float4 streamInfo;
+
+    float3 originalColor;
+
+    float4 probeOcclusion;
+#endif
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -102,7 +120,8 @@ half4 _MainLightColor;
 half4 _MainLightOcclusionProbes;
 uint _MainLightLayerMask;
 
-// xyz are currently unused
+// x: SSAO Enabled/Disabled (Needed for situations when OFF keyword is stripped out but feature disabled in runtime)
+// yz are currently unused
 // w: directLightStrength
 half4 _AmbientOcclusionParam;
 
@@ -114,6 +133,8 @@ float _RenderingLayerRcpMaxInt;
 // Screen coord override.
 float4 _ScreenCoordScaleBias;
 float4 _ScreenSizeOverride;
+
+uint _EnableProbeVolumes;
 
 #if USE_FORWARD_PLUS
 float4 _FPParams0;
@@ -142,7 +163,7 @@ StructuredBuffer<LightData> _AdditionalLightsBuffer;
 StructuredBuffer<int> _AdditionalLightsIndices;
 #else
 // GLES3 causes a performance regression in some devices when using CBUFFER.
-#ifndef SHADER_API_GLES3
+#ifndef LIGHT_SHADOWS_NO_CBUFFER
 CBUFFER_START(AdditionalLights)
 #endif
 float4 _AdditionalLightsPosition[MAX_VISIBLE_LIGHTS];
@@ -152,32 +173,34 @@ half4 _AdditionalLightsAttenuation[MAX_VISIBLE_LIGHTS];
 half4 _AdditionalLightsSpotDir[MAX_VISIBLE_LIGHTS];
 half4 _AdditionalLightsOcclusionProbes[MAX_VISIBLE_LIGHTS];
 float _AdditionalLightsLayerMasks[MAX_VISIBLE_LIGHTS]; // we want uint[] but Unity api does not support it.
-#ifndef SHADER_API_GLES3
+#ifndef LIGHT_SHADOWS_NO_CBUFFER
 CBUFFER_END
 #endif
 #endif
 
 #if USE_FORWARD_PLUS
 
-CBUFFER_START(URP_ZBinBuffer)
-        float4 URP_ZBins[MAX_ZBIN_VEC4S];
+CBUFFER_START(urp_ZBinBuffer)
+        float4 urp_ZBins[MAX_ZBIN_VEC4S];
 CBUFFER_END
 CBUFFER_START(urp_TileBuffer)
         float4 urp_Tiles[MAX_TILE_VEC4S];
 CBUFFER_END
 
 TEXTURE2D(urp_ReflProbes_Atlas);
-SAMPLER(samplerurp_ReflProbes_Atlas);
 float urp_ReflProbes_Count;
 
-#ifndef SHADER_API_GLES3
+// 2023.3 Deprecated. This is for backwards compatibility. Remove in the future.
+#define samplerurp_ReflProbes_Atlas sampler_LinearClamp
+
+#ifndef LIGHT_SHADOWS_NO_CBUFFER
 CBUFFER_START(urp_ReflectionProbeBuffer)
 #endif
 float4 urp_ReflProbes_BoxMax[MAX_REFLECTION_PROBES];          // w contains the blend distance
 float4 urp_ReflProbes_BoxMin[MAX_REFLECTION_PROBES];          // w contains the importance
 float4 urp_ReflProbes_ProbePosition[MAX_REFLECTION_PROBES];   // w is positive for box projection, |w| is max mip level
 float4 urp_ReflProbes_MipScaleOffset[MAX_REFLECTION_PROBES * 7];
-#ifndef SHADER_API_GLES3
+#ifndef LIGHT_SHADOWS_NO_CBUFFER
 CBUFFER_END
 #endif
 
@@ -191,7 +214,6 @@ CBUFFER_END
 #define UNITY_MATRIX_I_P   unity_MatrixInvP
 #define UNITY_MATRIX_VP    unity_MatrixVP
 #define UNITY_MATRIX_I_VP  unity_MatrixInvVP
-#define UNITY_MATRIX_PREV_VP    unity_MatrixPrevVP
 #define UNITY_MATRIX_MV    mul(UNITY_MATRIX_V, UNITY_MATRIX_M)
 #define UNITY_MATRIX_T_MV  transpose(UNITY_MATRIX_MV)
 #define UNITY_MATRIX_IT_MV transpose(mul(UNITY_MATRIX_I_M, UNITY_MATRIX_I_V))

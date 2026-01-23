@@ -24,7 +24,8 @@ Material:
   m_CustomRenderQueue: 3000
   stringTagMap:
     RenderType: Transparent
-  disabledShaderPasses: []
+  disabledShaderPasses:
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
@@ -180,6 +181,7 @@ Material:
     - _Cutoff: 0.5
     - _DetailNormalMapScale: 1
     - _DstBlend: 10
+    - _DstBlendAlpha: 10
     - _Float: 0
     - _GlossMapScale: 1
     - _Glossiness: 0.5
@@ -223,6 +225,7 @@ Material:
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
     - _SrcBlend: 5
+    - _SrcBlendAlpha: 1
     - _Surface: 1
     - _TwoSided_Normals: 0
     - _USE_RIBBON_MASK: 0
@@ -275,6 +278,7 @@ Material:
     - _UnderwaterFogColor: {r: 0, g: 0.7647059, b: 1, a: 1}
     - _Wind_Direction: {r: -0.73, g: 1, b: 0, a: 0}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!114 &4516825849490910794
 MonoBehaviour:
   m_ObjectHideFlags: 11
@@ -287,4 +291,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10

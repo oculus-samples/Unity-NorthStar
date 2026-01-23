@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using UnityEngine.Experimental.Rendering;
+using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal.Internal;
 
 namespace UnityEngine.Rendering.Universal
@@ -12,13 +15,13 @@ namespace UnityEngine.Rendering.Universal
     internal class DecalGBufferRenderPass : ScriptableRenderPass
     {
         private FilteringSettings m_FilteringSettings;
-        private ProfilingSampler m_ProfilingSampler;
         private List<ShaderTagId> m_ShaderTagIdList;
         private DecalDrawGBufferSystem m_DrawSystem;
         private DecalScreenSpaceSettings m_Settings;
         private DeferredLights m_DeferredLights;
         private RTHandle[] m_GbufferAttachments;
         private bool m_DecalLayers;
+        private PassData m_PassData;
 
         public DecalGBufferRenderPass(DecalScreenSpaceSettings settings, DecalDrawGBufferSystem drawSystem, bool decalLayers)
         {
@@ -26,7 +29,7 @@ namespace UnityEngine.Rendering.Universal
 
             m_DrawSystem = drawSystem;
             m_Settings = settings;
-            m_ProfilingSampler = new ProfilingSampler("Decal GBuffer Render");
+            profilingSampler = new ProfilingSampler("Draw Decal To GBuffer");
             m_FilteringSettings = new FilteringSettings(RenderQueueRange.opaque, -1);
             m_DecalLayers = decalLayers;
 
@@ -35,6 +38,11 @@ namespace UnityEngine.Rendering.Universal
                 m_ShaderTagIdList.Add(new ShaderTagId(DecalShaderPassNames.DecalGBufferProjector));
             else
                 m_ShaderTagIdList.Add(new ShaderTagId(DecalShaderPassNames.DecalGBufferMesh));
+
+            m_PassData = new PassData();
+            m_GbufferAttachments = new RTHandle[4];
+
+            breakGBufferAndDeferredRenderPass = false;
         }
 
         internal void Setup(DeferredLights deferredLights)
@@ -42,15 +50,15 @@ namespace UnityEngine.Rendering.Universal
             m_DeferredLights = deferredLights;
         }
 
+        [Obsolete(DeprecationMessage.CompatibilityScriptingAPIObsolete, false)]
         public override void Configure(CommandBuffer cmd, RenderTextureDescriptor cameraTextureDescriptor)
         {
-            if (m_DeferredLights.UseRenderPass)
+            if (m_DeferredLights.UseFramebufferFetch)
             {
-                m_GbufferAttachments = new RTHandle[]
-                {
-                    m_DeferredLights.GbufferAttachments[0], m_DeferredLights.GbufferAttachments[1],
-                    m_DeferredLights.GbufferAttachments[2], m_DeferredLights.GbufferAttachments[3]
-                };
+                m_GbufferAttachments[0] = m_DeferredLights.GbufferAttachments[0];
+                m_GbufferAttachments[1] = m_DeferredLights.GbufferAttachments[1];
+                m_GbufferAttachments[2] = m_DeferredLights.GbufferAttachments[2];
+                m_GbufferAttachments[3] = m_DeferredLights.GbufferAttachments[3];
 
                 if (m_DecalLayers)
                 {
@@ -65,7 +73,10 @@ namespace UnityEngine.Rendering.Universal
                         true, false, // TODO: Make rendering layers transient
                     };
 
+                    // Disable obsolete warning for internal usage
+                    #pragma warning disable CS0618
                     ConfigureInputAttachments(deferredInputAttachments, deferredInputIsTransient);
+                    #pragma warning restore CS0618
                 }
                 else
                 {
@@ -79,46 +90,121 @@ namespace UnityEngine.Rendering.Universal
                         true,
                     };
 
+                    // Disable obsolete warning for internal usage
+                    #pragma warning disable CS0618
                     ConfigureInputAttachments(deferredInputAttachments, deferredInputIsTransient);
+                    #pragma warning restore CS0618
                 }
             }
             else
             {
-                m_GbufferAttachments = new RTHandle[]
-                {
-                        m_DeferredLights.GbufferAttachments[0], m_DeferredLights.GbufferAttachments[1],
-                        m_DeferredLights.GbufferAttachments[2], m_DeferredLights.GbufferAttachments[3]
-                };
+                m_GbufferAttachments[0] = m_DeferredLights.GbufferAttachments[0];
+                m_GbufferAttachments[1] = m_DeferredLights.GbufferAttachments[1];
+                m_GbufferAttachments[2] = m_DeferredLights.GbufferAttachments[2];
+                m_GbufferAttachments[3] = m_DeferredLights.GbufferAttachments[3];
             }
 
+            // Disable obsolete warning for internal usage
+            #pragma warning disable CS0618
             ConfigureTarget(m_GbufferAttachments, m_DeferredLights.DepthAttachmentHandle);
+            #pragma warning restore CS0618
         }
 
+        [Obsolete(DeprecationMessage.CompatibilityScriptingAPIObsolete, false)]
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
+            UniversalCameraData cameraData = renderingData.frameData.Get<UniversalCameraData>();
+
+            InitPassData(cameraData, ref m_PassData);
+
             SortingCriteria sortingCriteria = renderingData.cameraData.defaultOpaqueSortFlags;
-            DrawingSettings drawingSettings = CreateDrawingSettings(m_ShaderTagIdList, ref renderingData, sortingCriteria);
-
-            var cmd = renderingData.commandBuffer;
-            using (new ProfilingScope(cmd, m_ProfilingSampler))
+            DrawingSettings drawingSettings = RenderingUtils.CreateDrawingSettings(m_ShaderTagIdList, ref renderingData, sortingCriteria);
+            var param = new RendererListParams(renderingData.cullResults, drawingSettings, m_FilteringSettings);
+            var rendererList = context.CreateRendererList(ref param);
+            using (new ProfilingScope(renderingData.commandBuffer, profilingSampler))
             {
-                context.ExecuteCommandBuffer(cmd);
-                cmd.Clear();
+                ExecutePass(CommandBufferHelpers.GetRasterCommandBuffer(renderingData.commandBuffer), m_PassData, rendererList);
+            }
+        }
 
-                NormalReconstruction.SetupProperties(cmd, renderingData.cameraData);
+        private class PassData
+        {
+            internal DecalDrawGBufferSystem drawSystem;
+            internal DecalScreenSpaceSettings settings;
+            internal bool decalLayers;
 
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalNormalBlendLow, m_Settings.normalBlend == DecalNormalBlend.Low);
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalNormalBlendMedium, m_Settings.normalBlend == DecalNormalBlend.Medium);
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalNormalBlendHigh, m_Settings.normalBlend == DecalNormalBlend.High);
+            internal UniversalCameraData cameraData;
+            internal RendererListHandle rendererList;
+        }
 
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalLayers, m_DecalLayers);
+        private void InitPassData(UniversalCameraData cameraData, ref PassData passData)
+        {
+            passData.drawSystem = m_DrawSystem;
+            passData.settings = m_Settings;
+            passData.decalLayers = m_DecalLayers;
+            passData.cameraData = cameraData;
+        }
 
-                context.ExecuteCommandBuffer(cmd);
-                cmd.Clear();
+        private static void ExecutePass(RasterCommandBuffer cmd, PassData passData, RendererList rendererList)
+        {
+            NormalReconstruction.SetupProperties(cmd, passData.cameraData);
 
-                m_DrawSystem?.Execute(cmd);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalNormalBlendLow, passData.settings.normalBlend == DecalNormalBlend.Low);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalNormalBlendMedium, passData.settings.normalBlend == DecalNormalBlend.Medium);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalNormalBlendHigh, passData.settings.normalBlend == DecalNormalBlend.High);
 
-                context.DrawRenderers(renderingData.cullResults, ref drawingSettings, ref m_FilteringSettings);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalLayers, passData.decalLayers);
+
+            passData.drawSystem?.Execute(cmd);
+            cmd.DrawRendererList(rendererList);
+        }
+
+        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
+        {
+            UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
+            TextureHandle cameraDepthTexture = resourceData.cameraDepthTexture;
+
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out var passData, profilingSampler))
+            {
+                UniversalRenderingData renderingData = frameData.Get<UniversalRenderingData>();
+                UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+                UniversalLightData lightData = frameData.Get<UniversalLightData>();
+
+                InitPassData(cameraData, ref passData);
+
+                // GBuffers 0 - 4
+                for (int i = 0; i <= m_DeferredLights.GBufferLightingIndex; i++)
+                {
+                    if (resourceData.gBuffer[i].IsValid())
+                    {
+                        builder.SetRenderAttachment(resourceData.gBuffer[i], i, AccessFlags.Write);
+                    }
+                }
+                builder.SetRenderAttachmentDepth(resourceData.activeDepthTexture, AccessFlags.Read);
+
+                if (renderGraph.nativeRenderPassesEnabled)
+                {
+                    if (resourceData.gBuffer[4].IsValid())
+                        builder.SetInputAttachment(resourceData.gBuffer[4], 0, AccessFlags.Read);
+                    if (m_DecalLayers && resourceData.gBuffer[5].IsValid())
+                        builder.SetInputAttachment(resourceData.gBuffer[5], 1, AccessFlags.Read);
+                }
+                else if (cameraDepthTexture.IsValid())
+                    builder.UseTexture(cameraDepthTexture, AccessFlags.Read);
+
+                SortingCriteria sortingCriteria = passData.cameraData.defaultOpaqueSortFlags;
+                DrawingSettings drawingSettings = RenderingUtils.CreateDrawingSettings(m_ShaderTagIdList, renderingData,
+                    passData.cameraData, lightData, sortingCriteria);
+                var param = new RendererListParams(renderingData.cullResults, drawingSettings, m_FilteringSettings);
+                passData.rendererList = renderGraph.CreateRendererList(param);
+                builder.UseRendererList(passData.rendererList);
+
+                builder.AllowGlobalStateModification(true);
+
+                builder.SetRenderFunc((PassData data, RasterGraphContext rgContext) =>
+                {
+                    ExecutePass(rgContext.cmd, data, data.rendererList);
+                });
             }
         }
 
@@ -129,10 +215,10 @@ namespace UnityEngine.Rendering.Universal
                 throw new System.ArgumentNullException("cmd");
             }
 
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalNormalBlendLow, false);
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalNormalBlendMedium, false);
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalNormalBlendHigh, false);
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.DecalLayers, false);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalNormalBlendLow, false);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalNormalBlendMedium, false);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalNormalBlendHigh, false);
+            cmd.SetKeyword(ShaderGlobalKeywords.DecalLayers, false);
         }
     }
 }

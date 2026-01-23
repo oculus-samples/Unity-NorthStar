@@ -21,19 +21,19 @@ public class ProfileCommandReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        Log.d("WAVES", "Received profiling command!");
-        Log.d("WAVES", "" + profileCommandInterface);
+        Log.d("NorthStar", "Received profiling command!");
+        Log.d("NorthStar", "" + profileCommandInterface);
             
         Bundle bundle = intent.getExtras();
         if (bundle != null) {
             for (String key : bundle.keySet()) 
             {
-                Log.e("WAVES", key + " : " + (bundle.get(key) != null ? bundle.get(key) : "NULL"));
+                Log.e("NorthStar", key + " : " + (bundle.get(key) != null ? bundle.get(key) : "NULL"));
 
                 Object value = bundle.get(key);
                 if (value != null)
                 {           
-                    Log.e("WAVES", ""+value.getClass());
+                    Log.e("NorthStar", ""+value.getClass());
 
                     if (value.getClass() == String.class)
                     {

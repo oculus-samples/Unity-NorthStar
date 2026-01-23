@@ -1,6 +1,6 @@
 using System;
 using UnityEngine.Experimental.Rendering;
-using UnityEngine.Experimental.Rendering.RenderGraphModule;
+using UnityEngine.Rendering.RenderGraphModule;
 
 namespace UnityEngine.Rendering.Universal.Internal
 {
@@ -12,14 +12,16 @@ namespace UnityEngine.Rendering.Universal.Internal
     /// </summary>
     public class DepthOnlyPass : ScriptableRenderPass
     {
-        private static readonly ShaderTagId k_ShaderTagId = new ShaderTagId("DepthOnly");
-
         private RTHandle destination { get; set; }
         private GraphicsFormat depthStencilFormat;
         internal ShaderTagId shaderTagId { get; set; } = k_ShaderTagId;
 
         private PassData m_PassData;
         FilteringSettings m_FilteringSettings;
+
+        // Statics
+        private static readonly ShaderTagId k_ShaderTagId = new ShaderTagId("DepthOnly");
+        private static readonly int s_CameraDepthTextureID = Shader.PropertyToID("_CameraDepthTexture");
 
         /// <summary>
         /// Creates a new <c>DepthOnlyPass</c> instance.
@@ -32,7 +34,7 @@ namespace UnityEngine.Rendering.Universal.Internal
         /// <seealso cref="LayerMask"/>
         public DepthOnlyPass(RenderPassEvent evt, RenderQueueRange renderQueueRange, LayerMask layerMask)
         {
-            base.profilingSampler = new ProfilingSampler(nameof(DepthOnlyPass));
+            profilingSampler = new ProfilingSampler("Draw Depth Only");
             m_PassData = new PassData();
             m_FilteringSettings = new FilteringSettings(renderQueueRange, layerMask);
             renderPassEvent = evt;
@@ -57,9 +59,13 @@ namespace UnityEngine.Rendering.Universal.Internal
         }
 
         /// <inheritdoc />
+        [Obsolete(DeprecationMessage.CompatibilityScriptingAPIObsolete, false)]
         public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
         {
             var desc = renderingData.cameraData.cameraTargetDescriptor;
+
+            // Disable obsolete warning for internal usage
+            #pragma warning disable CS0618
 
             // When depth priming is in use the camera target should not be overridden so the Camera's MSAA depth attachment is used.
             if (renderingData.cameraData.renderer.useDepthPriming && (renderingData.cameraData.renderType == CameraRenderType.Base || renderingData.cameraData.clearDepth))
@@ -75,71 +81,74 @@ namespace UnityEngine.Rendering.Universal.Internal
                 ConfigureTarget(destination);
                 ConfigureClear(ClearFlag.All, Color.black);
             }
+
+            #pragma warning restore CS0618
         }
 
-        private static void ExecutePass(ScriptableRenderContext context, PassData passData, ref RenderingData renderingData)
+        private static void ExecutePass(RasterCommandBuffer cmd, RendererList rendererList)
         {
-            var cmd = renderingData.commandBuffer;
-            var shaderTagId = passData.shaderTagId;
-            var filteringSettings = passData.filteringSettings;
-
             using (new ProfilingScope(cmd, ProfilingSampler.Get(URPProfileId.DepthPrepass)))
             {
-                context.ExecuteCommandBuffer(cmd);
-                cmd.Clear();
-
-                var sortFlags = renderingData.cameraData.defaultOpaqueSortFlags;
-                var drawSettings = RenderingUtils.CreateDrawingSettings(shaderTagId, ref renderingData, sortFlags);
-                drawSettings.perObjectData = PerObjectData.None;
-
-                context.DrawRenderers(renderingData.cullResults, ref drawSettings, ref filteringSettings);
+                cmd.DrawRendererList(rendererList);
             }
         }
 
         /// <inheritdoc/>
+        [Obsolete(DeprecationMessage.CompatibilityScriptingAPIObsolete, false)]
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
-            m_PassData.shaderTagId = this.shaderTagId;
-            m_PassData.filteringSettings = m_FilteringSettings;
-            ExecutePass(context, m_PassData, ref renderingData);
+            ContextContainer frameData = renderingData.frameData;
+            UniversalRenderingData universalRenderingData = frameData.Get<UniversalRenderingData>();
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            UniversalLightData lightData = frameData.Get<UniversalLightData>();
+
+            var param = InitRendererListParams(universalRenderingData, cameraData, lightData);
+            RendererList rendererList = context.CreateRendererList(ref param);
+
+            ExecutePass(CommandBufferHelpers.GetRasterCommandBuffer(renderingData.commandBuffer), rendererList);
         }
 
         private class PassData
         {
-            internal TextureHandle cameraDepthTexture;
-            internal RenderingData renderingData;
-            internal ShaderTagId shaderTagId;
-            internal FilteringSettings filteringSettings;
+            internal RendererListHandle rendererList;
         }
 
-        internal void Render(RenderGraph renderGraph, out TextureHandle cameraDepthTexture, ref RenderingData renderingData)
+        private RendererListParams InitRendererListParams(UniversalRenderingData renderingData, UniversalCameraData cameraData, UniversalLightData lightData)
         {
-            const GraphicsFormat k_DepthStencilFormat = GraphicsFormat.D32_SFloat_S8_UInt;
-            const int k_DepthBufferBits = 32;
+            var sortFlags = cameraData.defaultOpaqueSortFlags;
+            var drawSettings = RenderingUtils.CreateDrawingSettings(this.shaderTagId, renderingData, cameraData, lightData, sortFlags);
+            drawSettings.perObjectData = PerObjectData.None;
+            return new RendererListParams(renderingData.cullResults, drawSettings, m_FilteringSettings);
+        }
 
-            using (var builder = renderGraph.AddRenderPass<PassData>("DepthOnly Prepass", out var passData, base.profilingSampler))
+        internal void Render(RenderGraph renderGraph, ContextContainer frameData, ref TextureHandle cameraDepthTexture, uint batchLayerMask, bool setGlobalDepth)
+        {
+            UniversalRenderingData renderingData = frameData.Get<UniversalRenderingData>();
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            UniversalLightData lightData = frameData.Get<UniversalLightData>();
+
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out var passData, profilingSampler))
             {
-                var depthDescriptor = renderingData.cameraData.cameraTargetDescriptor;
-                depthDescriptor.graphicsFormat = GraphicsFormat.None;
-                depthDescriptor.depthStencilFormat = k_DepthStencilFormat;
-                depthDescriptor.depthBufferBits = k_DepthBufferBits;
-                depthDescriptor.msaaSamples = 1;// Depth-Only pass don't use MSAA
-                cameraDepthTexture = UniversalRenderer.CreateRenderGraphTexture(renderGraph, depthDescriptor, "_CameraDepthTexture", true);
+                var param = InitRendererListParams(renderingData, cameraData, lightData);
+                param.filteringSettings.batchLayerMask = batchLayerMask;
+                passData.rendererList = renderGraph.CreateRendererList(param);
+                builder.UseRendererList(passData.rendererList);
 
-                passData.cameraDepthTexture = builder.UseDepthBuffer(cameraDepthTexture, DepthAccess.Write);
-                passData.renderingData = renderingData;
-                passData.shaderTagId = this.shaderTagId;
-                passData.filteringSettings = m_FilteringSettings;
+                builder.SetRenderAttachmentDepth(cameraDepthTexture, AccessFlags.Write);
+
+                if (setGlobalDepth)
+                    builder.SetGlobalTextureAfterPass(cameraDepthTexture, s_CameraDepthTextureID);
 
                 //  TODO RENDERGRAPH: culling? force culling off for testing
                 builder.AllowPassCulling(false);
+                builder.AllowGlobalStateModification(true);
+                if (cameraData.xr.enabled)
+                    builder.EnableFoveatedRasterization(cameraData.xr.supportsFoveatedRendering && cameraData.xrUniversal.canFoveateIntermediatePasses);
 
-                builder.SetRenderFunc((PassData data, RenderGraphContext context) =>
+                builder.SetRenderFunc((PassData data, RasterGraphContext context) =>
                 {
-                    ExecutePass(context.renderContext, data, ref data.renderingData);
+                    ExecutePass(context.cmd, data.rendererList);
                 });
-
-                return;
             }
         }
     }

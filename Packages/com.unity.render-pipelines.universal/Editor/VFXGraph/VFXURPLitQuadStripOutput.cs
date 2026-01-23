@@ -1,20 +1,21 @@
 #if HAS_VFX_GRAPH
 using System.Collections.Generic;
 using System.Linq;
-using UnityEditor.VFX.Block;
+
 using UnityEngine;
 
 namespace UnityEditor.VFX.URP
 {
-    [VFXInfo(experimental = true)]
+    [VFXHelpURL("Context-OutputPrimitive")]
+    [VFXInfo(name = "Output ParticleStrip|URP Lit|Quad", category = "#3Output Strip", experimental = true)]
     class VFXURPLitQuadStripOutput : VFXAbstractParticleURPLitOutput
     {
         protected VFXURPLitQuadStripOutput() : base(true) {}  // strips
 
-        public override string name { get { return "Output ParticleStrip URP Lit Quad"; } }
-        public override string codeGeneratorTemplate { get { return RenderPipeTemplate("VFXParticleLitPlanarPrimitive"); } }
-        public override VFXTaskType taskType { get { return VFXTaskType.ParticleQuadOutput; } }
-        public override bool supportsUV { get { return true; } }
+        public override string name => "Output ParticleStrip".AppendLabel("URP Lit").AppendLabel("Quad");
+        public override string codeGeneratorTemplate => RenderPipeTemplate("VFXParticleLitPlanarPrimitive");
+        public override VFXTaskType taskType => VFXTaskType.ParticleQuadOutput;
+        public override bool supportsUV => true;
 
         [VFXSetting(VFXSettingAttribute.VisibleFlags.InInspector), SerializeField, Tooltip("When enabled, a Normal Bending Factor slider becomes available in the output which can be used to adjust the curvature of the normals.")]
         protected bool normalBending = false;
@@ -69,8 +70,8 @@ namespace UnityEditor.VFX.URP
                 yield return new VFXAttributeInfo(VFXAttribute.PivotZ, VFXAttributeMode.Read);
                 yield return new VFXAttributeInfo(VFXAttribute.Size, VFXAttributeMode.Read);
 
-                if (usesFlipbook)
-                    yield return new VFXAttributeInfo(VFXAttribute.TexIndex, VFXAttributeMode.Read);
+                foreach (var attribute in flipbookAttributes)
+                    yield return attribute;
             }
         }
 

@@ -9,7 +9,8 @@ void InitializeData(inout SpeedTreeVertexInput input, float lodValue)
     float3 finalPosition = input.vertex.xyz;
 
     #ifdef ENABLE_WIND
-        half windQuality = _WindQuality * _WindEnabled;
+        float windEnabled = dot(_ST_WindVector.xyz, _ST_WindVector.xyz) > 0.0f ? 1.0f : 0.0f;
+        half windQuality = _WindQuality * windEnabled;
 
         float3 rotatedWindVector, rotatedBranchAnchor;
         if (windQuality <= WIND_QUALITY_NONE)
@@ -161,7 +162,7 @@ SpeedTreeVertexOutput SpeedTree7Vert(SpeedTreeVertexInput input)
     output.positionWS = vertexInput.positionWS;
     output.clipPos = vertexInput.positionCS;
 
-    OUTPUT_SH(output.normalWS.xyz, output.vertexSH);
+    OUTPUT_SH4(vertexInput.positionWS, output.normalWS.xyz, GetWorldSpaceNormalizeViewDir(vertexInput.positionWS), output.vertexSH, output.probeOcclusion);
 
     return output;
 }

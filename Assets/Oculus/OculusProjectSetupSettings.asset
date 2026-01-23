@@ -15,7 +15,8 @@ MonoBehaviour:
   boolProperties:
     keys:
     - OVRProjectSetup.AllowLogs
-    values: 01
+    - Meta.XR.SDK.555a8939e2116242b33de093147cd755.Ignored.Android
+    values: 0101
   intProperties:
     keys: []
     values: 

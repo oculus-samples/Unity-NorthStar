@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10
 --- !u!21 &2100000
 Material:
   serializedVersion: 8
@@ -36,7 +36,8 @@ Material:
   m_CustomRenderQueue: -1
   stringTagMap:
     RenderType: Opaque
-  disabledShaderPasses: []
+  disabledShaderPasses:
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
@@ -121,6 +122,10 @@ Material:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _Parallax_Texture:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _SampleTexture2D_44a105a80ee243ba9fe5649083c6bc03_Texture_1_Texture2D:
         m_Texture: {fileID: 2800000, guid: b371e11b301690d48ac2a14535c97d41, type: 3}
         m_Scale: {x: 1, y: 1}
@@ -197,6 +202,7 @@ Material:
     - _Glossiness: 0
     - _GlossyReflections: 0
     - _IS_STANDARD_NORMAL_TEXTURE: 0
+    - _Is_Standard_Normal_Texture: 0
     - _Main_Light_Color_Influence: 1
     - _Metallic: 0
     - _MetallicValue: 0
@@ -205,6 +211,7 @@ Material:
     - _OcclusionStrength: 1
     - _OpacityValue: 1
     - _Parallax: 0.005
+    - _Parallax_Amplitude: 1
     - _Parallax_Strength: 0.05
     - _Pulse_Opacity: 0
     - _QueueControl: 0
@@ -233,6 +240,7 @@ Material:
     - _UseMetallicMap: 0
     - _UseOpacityMap: 0
     - _UseSmoothnessMap: 0
+    - _Use_Parallax: 0
     - _WaterHeight: -0.491
     - _Wet_Spec_Power_Boost: 0
     - _WetnessSmoothingFactor: 1
@@ -250,9 +258,11 @@ Material:
     - _EmissiveColor: {r: 0, g: 0, b: 0, a: 0}
     - _FresnelColor: {r: 1, g: 0.5803921, b: 0, a: 1}
     - _NormalValue: {r: 0, g: 0, b: 1, a: 0}
+    - _Offset: {r: 0, g: 0, b: 0, a: 0}
     - _Pulse_Tint: {r: 4, g: 1.381703, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
     - _Spec_Color: {r: 0.3301887, g: 0.3301887, b: 0.3301887, a: 1}
     - _Tiling: {r: 1, g: 1, b: 0, a: 0}
     - _Water_Height_Color: {r: 0.12156857, g: 0.18039218, b: 0.67058825, a: 1}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1

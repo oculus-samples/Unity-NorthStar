@@ -46,10 +46,13 @@ namespace UnityEngine.Rendering.Universal
 
         public static void AddShadowCasterGroupToList(ShadowCasterGroup2D shadowCaster, List<ShadowCasterGroup2D> list)
         {
+            if (list.Contains(shadowCaster))
+                return;
+
             int positionToInsert = 0;
             for (positionToInsert = 0; positionToInsert < list.Count; positionToInsert++)
             {
-                if (shadowCaster.GetShadowGroup() == list[positionToInsert].GetShadowGroup())
+                if (shadowCaster.m_Priority < list[positionToInsert].m_Priority)
                     break;
             }
 
@@ -78,17 +81,33 @@ namespace UnityEngine.Rendering.Universal
             return retGroup;
         }
 
-        public static bool AddToShadowCasterGroup(ShadowCaster2D shadowCaster, ref ShadowCasterGroup2D shadowCasterGroup)
+
+        public static int GetRendereringPriority(ShadowCaster2D shadowCaster)
+        {
+            int sortingOrder = 0;
+            // This should take sorting groups into account, but doesn't as there isn't a way to do this at the moment.
+            Renderer renderer;
+            if (shadowCaster.TryGetComponent<Renderer>(out renderer))
+                sortingOrder = renderer.sortingOrder;
+
+            return sortingOrder;
+        }
+
+        public static bool AddToShadowCasterGroup(ShadowCaster2D shadowCaster, ref ShadowCasterGroup2D shadowCasterGroup, ref int priority)
         {
             ShadowCasterGroup2D newShadowCasterGroup = FindTopMostCompositeShadowCaster(shadowCaster) as ShadowCasterGroup2D;
-
+            int newPriority = 0;
             if (newShadowCasterGroup == null)
+            {
+                newPriority = GetRendereringPriority(shadowCaster);
                 shadowCaster.TryGetComponent<ShadowCasterGroup2D>(out newShadowCasterGroup);
+            }
 
-            if (newShadowCasterGroup != null && shadowCasterGroup != newShadowCasterGroup)
+            if (newShadowCasterGroup != null && (shadowCasterGroup != newShadowCasterGroup || priority != newPriority))
             {
                 newShadowCasterGroup.RegisterShadowCaster2D(shadowCaster);
                 shadowCasterGroup = newShadowCasterGroup;
+                priority = newPriority;
                 return true;
             }
 

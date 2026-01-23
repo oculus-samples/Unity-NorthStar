@@ -47,6 +47,10 @@ struct Varyings
     float2 dynamicLightmapUV        : TEXCOORD9;
 #endif
 
+#ifdef USE_APV_PROBE_OCCLUSION
+    float4 probeOcclusion           : TEXCOORD10;
+#endif
+
     float4 clipPos                  : SV_POSITION;
     UNITY_VERTEX_OUTPUT_STEREO
 };
@@ -69,7 +73,7 @@ void InitializeInputData(Varyings IN, half3 normalTS, out InputData inputData)
         half3 normalWS = TransformObjectToWorldNormal(normalize(SAMPLE_TEXTURE2D(_TerrainNormalmapTexture, sampler_TerrainNormalmapTexture, sampleCoords).rgb * 2 - 1));
         half3 tangentWS = cross(GetObjectToWorldMatrix()._13_23_33, normalWS);
         inputData.normalWS = TransformTangentToWorld(normalTS, half3x3(-tangentWS, cross(normalWS, tangentWS), normalWS));
-        half3 SH = 0;
+        half3 SH = IN.vertexSH;
     #else
         half3 viewDirWS = GetWorldSpaceNormalizeViewDir(IN.positionWS);
         inputData.normalWS = IN.normal;
@@ -94,13 +98,7 @@ void InitializeInputData(Varyings IN, half3 normalTS, out InputData inputData)
     inputData.fogCoord = InitializeInputDataFog(float4(IN.positionWS, 1.0), IN.fogFactor);
     #endif
 
-#if defined(DYNAMICLIGHTMAP_ON)
-    inputData.bakedGI = SAMPLE_GI(IN.uvMainAndLM.zw, IN.dynamicLightmapUV, SH, inputData.normalWS);
-#else
-    inputData.bakedGI = SAMPLE_GI(IN.uvMainAndLM.zw, SH, inputData.normalWS);
-#endif
     inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(IN.clipPos);
-    inputData.shadowMask = SAMPLE_SHADOWMASK(IN.uvMainAndLM.zw)
 
     #if defined(DEBUG_DISPLAY)
     #if defined(DYNAMICLIGHTMAP_ON)
@@ -111,7 +109,35 @@ void InitializeInputData(Varyings IN, half3 normalTS, out InputData inputData)
     #else
     inputData.vertexSH = SH;
     #endif
+    #if defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;
     #endif
+    #endif
+}
+
+void InitializeBakedGIData(Varyings IN, inout InputData inputData)
+{
+    #if defined(_NORMALMAP) && !defined(ENABLE_TERRAIN_PERPIXEL_NORMAL)
+    half3 SH = 0;
+    #else
+    half3 SH = IN.vertexSH;
+    #endif
+
+#if defined(DYNAMICLIGHTMAP_ON)
+    inputData.bakedGI = SAMPLE_GI(IN.uvMainAndLM.zw, IN.dynamicLightmapUV, SH, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(IN.uvMainAndLM.zw);
+#elif !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    inputData.bakedGI = SAMPLE_GI(SH,
+        GetAbsolutePositionWS(inputData.positionWS),
+        inputData.normalWS,
+        inputData.viewDirectionWS,
+        inputData.positionCS.xy,
+        IN.probeOcclusion,
+        inputData.shadowMask);
+#else
+    inputData.bakedGI = SAMPLE_GI(IN.uvMainAndLM.zw, SH, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(IN.uvMainAndLM.zw);
+#endif
 }
 
 #ifndef TERRAIN_SPLAT_BASEPASS
@@ -126,7 +152,7 @@ void NormalMapMix(float4 uvSplat01, float4 uvSplat23, inout half4 splatControl, 
         nrm += splatControl.a * UnpackNormalScale(SAMPLE_TEXTURE2D(_Normal3, sampler_Normal0, uvSplat23.zw), _NormalScale3);
 
         // avoid risk of NaN when normalizing.
-        #if HAS_HALF
+        #if !HALF_IS_FLOAT
             nrm.z += half(0.01);
         #else
             nrm.z += 1e-5f;
@@ -228,6 +254,43 @@ void SplatmapFinalColor(inout half4 color, half fogCoord)
     #endif
 }
 
+void SetupTerrainDebugTextureData(inout InputData inputData, float2 uv)
+{
+    #if defined(DEBUG_DISPLAY)
+        #if defined(TERRAIN_SPLAT_ADDPASS)
+            if (_DebugMipInfoMode != DEBUGMIPINFOMODE_NONE)
+            {
+                discard; // Layer 4 & beyond are done additively, doesn't make sense for the mipmap streaming debug views -> stop.
+            }
+        #endif
+
+        switch (_DebugMipMapTerrainTextureMode)
+        {
+            case DEBUGMIPMAPMODETERRAINTEXTURE_CONTROL:
+                SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, TRANSFORM_TEX(uv, _Control), _Control);
+                break;
+            case DEBUGMIPMAPMODETERRAINTEXTURE_LAYER0:
+                SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, TRANSFORM_TEX(uv, _Splat0), _Splat0);
+                break;
+            case DEBUGMIPMAPMODETERRAINTEXTURE_LAYER1:
+                SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, TRANSFORM_TEX(uv, _Splat1), _Splat1);
+                break;
+            case DEBUGMIPMAPMODETERRAINTEXTURE_LAYER2:
+                SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, TRANSFORM_TEX(uv, _Splat2), _Splat2);
+                break;
+            case DEBUGMIPMAPMODETERRAINTEXTURE_LAYER3:
+                SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, TRANSFORM_TEX(uv, _Splat3), _Splat3);
+                break;
+            default:
+                break;
+        }
+
+        // TERRAIN_STREAM_INFO: no streamInfo will have been set (no MeshRenderer); set status to "6" to reflect in the debug status that this is a terrain
+        // also, set the per-material status to "4" to indicate warnings
+        inputData.streamInfo = TERRAIN_STREAM_INFO;
+    #endif
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 //                  Vertex and Fragment functions                            //
 ///////////////////////////////////////////////////////////////////////////////
@@ -267,7 +330,7 @@ Varyings SplatmapVert(Attributes v)
         o.bitangent = half4(normalInput.bitangentWS, viewDirWS.z);
     #else
         o.normal = TransformObjectToWorldNormal(v.normalOS);
-        o.vertexSH = SampleSH(o.normal);
+        OUTPUT_SH4(Attributes.positionWS, o.normal.xyz, GetWorldSpaceNormalizeViewDir(Attributes.positionWS), o.vertexSH, o.probeOcclusion);
     #endif
 
     half fogFactor = 0;
@@ -382,7 +445,7 @@ void SplatmapFragment(
 
     InputData inputData;
     InitializeInputData(IN, normalTS, inputData);
-    SETUP_DEBUG_TEXTURE_DATA(inputData, IN.uvMainAndLM.xy, _BaseMap);
+    SetupTerrainDebugTextureData(inputData, IN.uvMainAndLM.xy);
 
 #if defined(_DBUFFER)
     half3 specular = half3(0.0h, 0.0h, 0.0h);
@@ -394,6 +457,8 @@ void SplatmapFragment(
         occlusion,
         smoothness);
 #endif
+
+    InitializeBakedGIData(IN, inputData);
 
 #ifdef TERRAIN_GBUFFER
 
@@ -419,7 +484,6 @@ void SplatmapFragment(
     smoothness *= alpha;
 
     return BRDFDataToGbuffer(brdfData, inputData, smoothness, color.rgb, occlusion);
-
 #else
 
     half4 color = UniversalFragmentPBR(inputData, albedo, metallic, /* specular */ half3(0.0h, 0.0h, 0.0h), smoothness, occlusion, /* emission */ half3(0, 0, 0), alpha);

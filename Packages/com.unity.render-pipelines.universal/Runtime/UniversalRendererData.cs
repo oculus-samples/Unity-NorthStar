@@ -6,6 +6,7 @@ using ShaderKeywordFilter = UnityEditor.ShaderKeywordFilter;
 using System;
 using UnityEngine.Scripting.APIUpdating;
 using UnityEngine.Assertions;
+using UnityEngine.Experimental.Rendering;
 
 namespace UnityEngine.Rendering.Universal
 {
@@ -23,11 +24,87 @@ namespace UnityEngine.Rendering.Universal
     }
 
     /// <summary>
+    /// Render path exposed as flags to allow compatibility to be expressed with multiple options.
+    /// </summary>
+    [Flags]
+    public enum RenderPathCompatibility
+    {
+        /// <summary>Forward Rendering Path</summary>
+        Forward     = 1 << 0,
+        /// <summary>Deferred Rendering Path</summary>
+        Deferred    = 1 << 1,
+        /// <summary>Forward+ Rendering Path</summary>
+        ForwardPlus = 1 << 2,
+        /// <summary>All Rendering Paths</summary>
+        All         = Forward | Deferred | ForwardPlus
+    }
+
+    [AttributeUsage(AttributeTargets.Field)]
+    sealed class RenderPathCompatibleAttribute : Attribute
+    {
+        public RenderPathCompatibility renderPath;
+
+        public RenderPathCompatibleAttribute(RenderPathCompatibility renderPath)
+        {
+            this.renderPath = renderPath;
+        }
+    }
+
+    /// <summary>
+    /// Dept format options for the depth texture and depth attachment.
+    /// Each option is marked with all the render paths its compatible with.
+    /// </summary>
+    public enum DepthFormat
+    {
+        /// <summary>
+        /// Default format for Android and Switch platforms is <see cref="GraphicsFormat.D24_UNorm_S8_UInt"/> and <see cref="GraphicsFormat.D32_SFloat_S8_UInt"/> for other platforms
+        /// </summary>
+        [RenderPathCompatible(RenderPathCompatibility.All)]
+        Default,
+
+        /// <summary>
+        /// Format containing 16 unsigned normalized bits in depth component. Corresponds to <see cref="GraphicsFormat.D16_UNorm"/>.
+        /// </summary>
+        [RenderPathCompatible(RenderPathCompatibility.Forward | RenderPathCompatibility.ForwardPlus)]
+        Depth_16 = GraphicsFormat.D16_UNorm,
+
+        /// <summary>
+        /// Format containing 24 unsigned normalized bits in depth component. Corresponds to <see cref="GraphicsFormat.D24_UNorm"/>.
+        /// </summary>
+        [RenderPathCompatible(RenderPathCompatibility.Forward | RenderPathCompatibility.ForwardPlus)]
+        Depth_24 = GraphicsFormat.D24_UNorm,
+
+        /// <summary>
+        /// Format containing 32 signed float bits in depth component. Corresponds to <see cref="GraphicsFormat.D32_SFloat"/>.
+        /// </summary>
+        [RenderPathCompatible(RenderPathCompatibility.Forward | RenderPathCompatibility.ForwardPlus)]
+        Depth_32 = GraphicsFormat.D32_SFloat,
+
+        /// <summary>
+        /// Format containing 16 unsigned normalized bits in depth component and 8 unsigned integer bits in stencil. Corresponds to <see cref="GraphicsFormat.D16_UNorm_S8_UInt"/>.
+        /// </summary>
+        [RenderPathCompatible(RenderPathCompatibility.All)]
+        Depth_16_Stencil_8 = GraphicsFormat.D16_UNorm_S8_UInt,
+
+        /// <summary>
+        /// Format containing 24 unsigned normalized bits in depth component and 8 unsigned integer bits in stencil. Corresponds to <see cref="GraphicsFormat.D24_UNorm_S8_UInt"/>.
+        /// </summary>
+        [RenderPathCompatible(RenderPathCompatibility.All)]
+        Depth_24_Stencil_8 = GraphicsFormat.D24_UNorm_S8_UInt,
+
+        /// <summary>
+        /// Format containing 32 signed float bits in depth component and 8 unsigned integer bits in stencil. Corresponds to <see cref="GraphicsFormat.D32_SFloat_S8_UInt"/>.
+        /// </summary>
+        [RenderPathCompatible(RenderPathCompatibility.All)]
+        Depth_32_Stencil_8 = GraphicsFormat.D32_SFloat_S8_UInt,
+    }
+
+    /// <summary>
     /// Class containing resources needed for the <c>UniversalRenderer</c>.
     /// </summary>
     [Serializable, ReloadGroup, ExcludeFromPreset]
     [URPHelpURL("urp-universal-renderer")]
-    public class UniversalRendererData : ScriptableRendererData, ISerializationCallbackReceiver
+    public partial class UniversalRendererData : ScriptableRendererData, ISerializationCallbackReceiver
     {
 #if UNITY_EDITOR
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1812")]
@@ -49,103 +126,9 @@ namespace UnityEngine.Rendering.Universal
 #endif
 
         /// <summary>
-        /// Class containing shader resources used in URP.
-        /// </summary>
-        [Serializable, ReloadGroup]
-        public sealed class ShaderResources
-        {
-            /// <summary>
-            /// Blit shader.
-            /// </summary>
-            [Reload("Shaders/Utils/Blit.shader")]
-            public Shader blitPS;
-
-            /// <summary>
-            /// Copy Depth shader.
-            /// </summary>
-            [Reload("Shaders/Utils/CopyDepth.shader")]
-            public Shader copyDepthPS;
-
-            /// <summary>
-            /// Screen Space Shadows shader.
-            /// </summary>
-            [Obsolete("Obsolete, this feature will be supported by new 'ScreenSpaceShadows' renderer feature")]
-            public Shader screenSpaceShadowPS;
-
-            /// <summary>
-            /// Sampling shader.
-            /// </summary>
-            [Reload("Shaders/Utils/Sampling.shader")]
-            public Shader samplingPS;
-
-            /// <summary>
-            /// Stencil Deferred shader.
-            /// </summary>
-            [Reload("Shaders/Utils/StencilDeferred.shader")]
-            public Shader stencilDeferredPS;
-
-            /// <summary>
-            /// Fallback error shader.
-            /// </summary>
-            [Reload("Shaders/Utils/FallbackError.shader")]
-            public Shader fallbackErrorPS;
-
-            /// <summary>
-            /// Fallback loading shader.
-            /// </summary>
-            [Reload("Shaders/Utils/FallbackLoading.shader")]
-            public Shader fallbackLoadingPS;
-
-            /// <summary>
-            /// Material Error shader.
-            /// </summary>
-            [Obsolete("Use fallbackErrorPS instead")]
-            [Reload("Shaders/Utils/MaterialError.shader")]
-            public Shader materialErrorPS;
-
-            // Core blitter shaders, adapted from HDRP
-            // TODO: move to core and share with HDRP
-            [Reload("Shaders/Utils/CoreBlit.shader"), SerializeField]
-            internal Shader coreBlitPS;
-            [Reload("Shaders/Utils/CoreBlitColorAndDepth.shader"), SerializeField]
-            internal Shader coreBlitColorAndDepthPS;
-
-            /// <summary>
-            /// Blit shader that blits UI Overlay and performs HDR encoding.
-            /// </summary>
-            [Reload("Shaders/Utils/BlitHDROverlay.shader"), SerializeField]
-            internal Shader blitHDROverlay;
-
-            /// <summary>
-            /// Camera Motion Vectors shader.
-            /// </summary>
-            [Reload("Shaders/CameraMotionVectors.shader")]
-            public Shader cameraMotionVector;
-
-            /// <summary>
-            /// Object Motion Vectors shader.
-            /// </summary>
-            [Reload("Shaders/ObjectMotionVectors.shader")]
-            public Shader objectMotionVector;
-        }
-
-        /// <summary>
         /// Resources needed for Post Processing.
         /// </summary>
         public PostProcessData postProcessData = null;
-
-#if ENABLE_VR && ENABLE_XR_MODULE
-        /// <summary>
-        /// Shader resources needed in URP for XR.
-        /// </summary>
-        [Reload("Runtime/Data/XRSystemData.asset")]
-        public XRSystemData xrSystemData = null;
-#endif
-
-        /// <summary>
-        /// Shader resources used in URP.
-        /// </summary>
-        public ShaderResources shaders = null;
 
         const int k_LatestAssetVersion = 2;
         [SerializeField] int m_AssetVersion = 0;
@@ -156,6 +139,8 @@ namespace UnityEngine.Rendering.Universal
         [SerializeField] RenderingMode m_RenderingMode = RenderingMode.Forward;
         [SerializeField] DepthPrimingMode m_DepthPrimingMode = DepthPrimingMode.Disabled; // Default disabled because there are some outstanding issues with Text Mesh rendering.
         [SerializeField] CopyDepthMode m_CopyDepthMode = CopyDepthMode.AfterTransparents;
+        [SerializeField] DepthFormat m_DepthAttachmentFormat = DepthFormat.Default;
+        [SerializeField] DepthFormat m_DepthTextureFormat = DepthFormat.Default;
 #if UNITY_EDITOR
         // Do not strip accurateGbufferNormals on Mobile Vulkan as some GPUs do not support R8G8B8A8_SNorm, which then force us to use accurateGbufferNormals
         [ShaderKeywordFilter.ApplyRulesIfNotGraphicsAPI(GraphicsDeviceType.Vulkan)]
@@ -266,7 +251,57 @@ namespace UnityEngine.Rendering.Universal
         }
 
         /// <summary>
-        /// Use Octaedron Octahedron normal vector encoding for gbuffer normals.
+        /// Depth format used for CameraDepthAttachment
+        /// </summary>
+        public DepthFormat depthAttachmentFormat
+        {
+            get
+            {
+                if (m_DepthAttachmentFormat != DepthFormat.Default && !SystemInfo.IsFormatSupported((GraphicsFormat)m_DepthAttachmentFormat, GraphicsFormatUsage.Render))
+                {
+                    Debug.LogWarning("Selected Depth Attachment Format is not supported on this platform, falling back to Default");
+                    return DepthFormat.Default;
+                }
+                return m_DepthAttachmentFormat;
+            }
+            set
+            {
+                SetDirty();
+                if (renderingMode == RenderingMode.Deferred && !GraphicsFormatUtility.IsStencilFormat((GraphicsFormat)value))
+                {
+                    Debug.LogWarning("Depth format without stencil is not supported on Deferred renderer, falling back to Default");
+                    m_DepthAttachmentFormat = DepthFormat.Default;
+                }
+                else
+                {
+                    m_DepthAttachmentFormat = value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Depth format used for CameraDepthTexture
+        /// </summary>
+        public DepthFormat depthTextureFormat
+        {
+            get
+            {
+                if (m_DepthTextureFormat != DepthFormat.Default && !SystemInfo.IsFormatSupported((GraphicsFormat) m_DepthTextureFormat, GraphicsFormatUsage.Render))
+                {
+                    Debug.LogWarning($"Selected Depth Texture Format {m_DepthTextureFormat.ToString()} is not supported on this platform, falling back to Default");
+                    return DepthFormat.Default;
+                }
+                return m_DepthTextureFormat;
+            }
+            set
+            {
+                SetDirty();
+                m_DepthTextureFormat = value;
+            }
+        }
+
+        /// <summary>
+        /// Use Octahedron normal vector encoding for gbuffer normals.
         /// The overhead is negligible from desktop GPUs, while it should be avoided for mobile GPUs.
         /// </summary>
         public bool accurateGbufferNormals
@@ -292,32 +327,43 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
+        
+        internal override bool stripShadowsOffVariants
+        {
+            get => m_StripShadowsOffVariants;
+            set => m_StripShadowsOffVariants = value;
+        }
+
+        internal override bool stripAdditionalLightOffVariants
+        {
+            get => m_StripAdditionalLightOffVariants;
+            set => m_StripAdditionalLightOffVariants = value;
+        }
+
+        [NonSerialized]
+        bool m_StripShadowsOffVariants = true;
+        [NonSerialized]
+        bool m_StripAdditionalLightOffVariants = true;
+
         /// <inheritdoc/>
         protected override void OnEnable()
         {
             base.OnEnable();
-
-            // Upon asset creation, OnEnable is called and `shaders` reference is not yet initialized
-            // We need to call the OnEnable for data migration when updating from old versions of UniversalRP that
-            // serialized resources in a different format. Early returning here when OnEnable is called
-            // upon asset creation is fine because we guarantee new assets get created with all resources initialized.
-            if (shaders == null)
-                return;
-
             ReloadAllNullProperties();
         }
 
         private void ReloadAllNullProperties()
         {
+            // Upon asset creation, OnEnable is called and `shaders` reference is not yet initialized
+            // We need to call the OnEnable for data migration when updating from old versions of UniversalRP that
+            // serialized resources in a different format. Early returning here when OnEnable is called
+            // upon asset creation is fine because we guarantee new assets get created with all resources initialized.
+
 #if UNITY_EDITOR
             ResourceReloader.TryReloadAllNullIn(this, UniversalRenderPipelineAsset.packagePath);
 
             if (postProcessData != null)
-                ResourceReloader.TryReloadAllNullIn(postProcessData, UniversalRenderPipelineAsset.packagePath);
-
-#if ENABLE_VR && ENABLE_XR_MODULE
-            ResourceReloader.TryReloadAllNullIn(xrSystemData, UniversalRenderPipelineAsset.packagePath);
-#endif
+                postProcessData.Populate();
 #endif
         }
 

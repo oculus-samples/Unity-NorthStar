@@ -78,8 +78,8 @@ namespace NorthStar
             if (m_joints.Count == 0)
             {
                 m_velocityHistory.Clear();
-                m_body.drag += m_additionalDragOnGrab;
-                m_body.angularDrag += m_additionalAngularDragOnGrab;
+                m_body.linearDamping += m_additionalDragOnGrab;
+                m_body.angularDamping += m_additionalAngularDragOnGrab;
                 if (m_toggleIntertiaTensorOnGrab)
                 {
                     m_body.automaticInertiaTensor = false;
@@ -114,7 +114,7 @@ namespace NorthStar
                 return;
             if (m_velocityHistory.Count == m_velocityHistoryCapacity)
                 m_velocityHistory.RemoveAt(0);
-            m_velocityHistory.Add(m_body.velocity);
+            m_velocityHistory.Add(m_body.linearVelocity);
         }
 
         private Vector3 GetPoint(Transform hand, HandGrabInteractable interactable, out Quaternion rotation)
@@ -155,8 +155,8 @@ namespace NorthStar
             _ = m_joints.Remove(interactor);
             if (m_joints.Count == 0)
             {
-                m_body.drag -= m_additionalDragOnGrab;
-                m_body.angularDrag -= m_additionalAngularDragOnGrab;
+                m_body.linearDamping -= m_additionalDragOnGrab;
+                m_body.angularDamping -= m_additionalAngularDragOnGrab;
                 if (m_toggleIntertiaTensorOnGrab)
                 {
                     m_body.automaticInertiaTensor = true;
@@ -170,7 +170,7 @@ namespace NorthStar
                         avgVelocity += velocity;
                     avgVelocity /= Mathf.Max(m_velocityHistory.Count, 1);
                     m_velocityHistory.Clear();
-                    m_body.velocity += avgVelocity * m_throwVelocityPercent;
+                    m_body.linearVelocity += avgVelocity * m_throwVelocityPercent;
                 }
             }
             OnEndInteraction?.Invoke(interactor);

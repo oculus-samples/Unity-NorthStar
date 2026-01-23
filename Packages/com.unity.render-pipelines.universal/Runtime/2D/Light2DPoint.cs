@@ -63,7 +63,6 @@ namespace UnityEngine.Rendering.Universal
         [Obsolete("pointLightQuality has been changed to normalMapQuality", true)]
         public NormalMapQuality pointLightQuality => m_NormalMapQuality;
 
-
         internal bool isPointLight => m_LightType == LightType.Point;
     }
 }

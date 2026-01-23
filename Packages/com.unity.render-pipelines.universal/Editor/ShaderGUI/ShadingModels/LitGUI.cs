@@ -483,7 +483,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGUI
                     GetSmoothnessMapChannel(material) == SmoothnessMapChannel.AlbedoAlpha && opaque);
             }
 
-            // Clear coat keywords are independent to remove possiblity of invalid combinations.
+            // Clear coat keywords are independent to remove possibility of invalid combinations.
             if (ClearCoatEnabled(material))
             {
                 var hasMap = material.HasProperty("_ClearCoatMap") && material.GetTexture("_ClearCoatMap") != null;

@@ -27,11 +27,7 @@ struct BRDFData
 
 half ReflectivitySpecular(half3 specular)
 {
-#if defined(SHADER_API_GLES)
-    return specular.r; // Red channel - because most metals are either monochrome or with redish/yellowish tint
-#else
     return Max3(specular.r, specular.g, specular.b);
-#endif
 }
 
 half OneMinusReflectivityMetallic(half metallic)
@@ -94,7 +90,7 @@ inline void InitializeBRDFData(half3 albedo, half metallic, half3 specular, half
     half oneMinusReflectivity = OneMinusReflectivityMetallic(metallic);
     half reflectivity = half(1.0) - oneMinusReflectivity;
     half3 brdfDiffuse = albedo * oneMinusReflectivity;
-    half3 brdfSpecular = lerp(kDieletricSpec.rgb, albedo, metallic);
+    half3 brdfSpecular = lerp(kDielectricSpec.rgb, albedo, metallic);
 #endif
 
     InitializeBRDFDataDirect(albedo, brdfDiffuse, brdfSpecular, reflectivity, oneMinusReflectivity, smoothness, alpha, outBRDFData);
@@ -157,28 +153,30 @@ BRDFData CreateClearCoatBRDFData(SurfaceData surfaceData, inout BRDFData brdfDat
     return brdfDataClearCoat;
 }
 
-// Meta change : Improved BRDF function
+// META CHANGE START: Improved BRDF function for VR performance
 // https://www.unrealengine.com/en-US/blog/physically-based-shading-on-mobile
 half3 EnvBRDFApprox( half3 SpecularColor, half Roughness, half NoV )
 {
-	const half4 c0 = { -1, -0.0275, -0.572, 0.022 };
-	const half4 c1 = { 1, 0.0425, 1.04, -0.04 };
-	half4 r = Roughness * c0 + c1;
-	half a004 = min( r.x * r.x, exp2( -9.28 * NoV ) ) * r.x + r.y;
-	half2 AB = half2( -1.04, 1.04 ) * a004 + r.zw;
-	return SpecularColor * AB.x + AB.y;
+    const half4 c0 = { -1, -0.0275, -0.572, 0.022 };
+    const half4 c1 = { 1, 0.0425, 1.04, -0.04 };
+    half4 r = Roughness * c0 + c1;
+    half a004 = min( r.x * r.x, exp2( -9.28 * NoV ) ) * r.x + r.y;
+    half2 AB = half2( -1.04, 1.04 ) * a004 + r.zw;
+    return SpecularColor * AB.x + AB.y;
 }
 
 half EnvBRDFApproxNonmetal( half Roughness, half NoV )
 {
-	// Same as EnvBRDFApprox( 0.04, Roughness, NoV )
-	const half2 c0 = { -1, -0.0275 };
-	const half2 c1 = { 1, 0.0425 };
-	half2 r = Roughness * c0 + c1;
-	return min( r.x * r.x, exp2( -9.28 * NoV ) ) * r.x + r.y;
+    // Same as EnvBRDFApprox( 0.04, Roughness, NoV )
+    const half2 c0 = { -1, -0.0275 };
+    const half2 c1 = { 1, 0.0425 };
+    half2 r = Roughness * c0 + c1;
+    return min( r.x * r.x, exp2( -9.28 * NoV ) ) * r.x + r.y;
 }
+// META CHANGE END
 
 // Computes the specular term for EnvironmentBRDF
+// META CHANGE START: Added NoV parameter for improved BRDF approximation
 half3 EnvironmentBRDFSpecular(BRDFData brdfData, half fresnelTerm, half NoV)
 {
 #if defined(_NONMETAL) && _NONMETAL
@@ -186,10 +184,11 @@ half3 EnvironmentBRDFSpecular(BRDFData brdfData, half fresnelTerm, half NoV)
 #else
     return EnvBRDFApprox(brdfData.specular, brdfData.roughness, NoV);
 #endif
-    
-    float surfaceReduction = 1.0 / (brdfData.roughness2 + 1.0);
-    return half3(surfaceReduction * lerp(brdfData.specular, brdfData.grazingTerm, fresnelTerm));
+    // Original code:
+    // float surfaceReduction = 1.0 / (brdfData.roughness2 + 1.0);
+    // return half3(surfaceReduction * lerp(brdfData.specular, brdfData.grazingTerm, fresnelTerm));
 }
+// META CHANGE END
 
 half3 EnvironmentBRDF(BRDFData brdfData, half3 indirectDiffuse, half3 indirectSpecular, half fresnelTerm, half NoV)
 {

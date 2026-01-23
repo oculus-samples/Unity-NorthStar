@@ -68,7 +68,7 @@ namespace UnityEditor.Rendering.Universal
         static void DrawerProjection(UniversalRenderPipelineSerializedCamera p, Editor owner)
         {
             var camera = p.serializedObject.targetObject as Camera;
-            bool pixelPerfectEnabled = camera.TryGetComponent<UnityEngine.Experimental.Rendering.Universal.PixelPerfectCamera>(out var pixelPerfectCamera) && pixelPerfectCamera.enabled;
+            bool pixelPerfectEnabled = camera.TryGetComponent<PixelPerfectCamera>(out var pixelPerfectCamera) && pixelPerfectCamera.enabled;
             if (pixelPerfectEnabled)
                 EditorGUILayout.HelpBox(Styles.pixelPerfectInfo, MessageType.Info);
 
@@ -98,6 +98,10 @@ namespace UnityEditor.Rendering.Universal
             if (EditorGUI.EndChangeCheck() || camType != originalCamType)
             {
                 p.cameraType.intValue = (int)camType;
+                if (camType == CameraRenderType.Overlay)
+                {
+                    p.baseCameraSettings.clearFlags.intValue = (int)CameraClearFlags.Nothing;
+                }
             }
 
             EditorGUILayout.Space();

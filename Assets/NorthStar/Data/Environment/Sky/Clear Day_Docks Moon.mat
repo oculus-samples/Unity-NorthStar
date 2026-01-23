@@ -25,6 +25,7 @@ Material:
   disabledShaderPasses:
   - SHADOWCASTER
   - DepthOnly
+  - MOTIONVECTORS
   m_LockedProperties: _Back_Scatter_Power _Cloud_Ambient _Cloud_Back_Color _Cloud_Blend_Offset
     _Cloud_Blend_Power _Cloud_Direction _Cloud_Normal _Cloud_Offset _Cloud_Opacity_Offset
     _Cloud_Opacity_Scale _Cloud_Scale _Cloud_Speed _Cloud_Sun_Color _Cloud_Texture
@@ -53,6 +54,7 @@ Material:
     - _Cloud_Opacity_Scale: 0.25
     - _Cloud_Scale: 0
     - _DstBlend: 10
+    - _DstBlendAlpha: 10
     - _IS_CELESTIAL_OBJECT: 1
     - _Sky_Blend_Offset: 0
     - _Sky_Blend_Power: 3
@@ -63,6 +65,7 @@ Material:
     - _Cloud_Back_Color: {r: 0.46226418, g: 0.4251958, b: 0.4251958, a: 1}
     - _Sky_Horizon_Color: {r: 1, g: 0.83095276, b: 0.8156863, a: 1}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!114 &1130983063974069177
 MonoBehaviour:
   m_ObjectHideFlags: 11
@@ -75,4 +78,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10

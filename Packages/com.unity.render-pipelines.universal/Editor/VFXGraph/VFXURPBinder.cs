@@ -13,28 +13,76 @@ namespace UnityEditor.VFX.URP
 {
     class VFXURPBinder : VFXSRPBinder
     {
+        public VFXURPBinder()
+        {
+            BaseShaderGUI.ShadowCasterPassEnabledChanged += OnShadowCasterPassEnabledChanged;
+            BaseShaderGUI.MotionVectorPassEnabledChanged += OnMotionVectorPassEnabledChanged;
+        }
+
+        ~VFXURPBinder()
+        {
+            BaseShaderGUI.ShadowCasterPassEnabledChanged -= OnShadowCasterPassEnabledChanged;
+            BaseShaderGUI.MotionVectorPassEnabledChanged -= OnMotionVectorPassEnabledChanged;
+        }
+
         public override string templatePath { get { return "Packages/com.unity.render-pipelines.universal/Editor/VFXGraph/Shaders"; } }
         public override string runtimePath { get { return "Packages/com.unity.render-pipelines.universal/Runtime/VFXGraph/Shaders"; } }
         public override string SRPAssetTypeStr { get { return "UniversalRenderPipelineAsset"; } }
-        public override Type SRPOutputDataType { get { return null; } } // null by now but use VFXURPSubOutput when there is a need to store URP specific data
+        public override Type SRPOutputDataType { get { return typeof(VFXURPSubOutput); } }
+
+        public override bool IsShaderVFXCompatible(Shader shader)
+        {
+            return shader.TryGetMetadataOfType<UniversalMetadata>(out var metadata) && metadata.isVFXCompatible;
+        }
+
+        public override bool GetSupportsMotionVectorPerVertex(ShaderGraphVfxAsset shaderGraph, VFXMaterialSerializedSettings materialSettings)
+        {
+            var path = AssetDatabase.GetAssetPath(shaderGraph);
+            var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
+            if (shader.TryGetMetadataOfType<UniversalMetadata>(out var metaData))
+            {
+                if (metaData.hasVertexModificationInMotionVector)
+                    return false;
+            }
+            return true;
+        }
 
         public override void SetupMaterial(Material material, bool hasMotionVector = false, bool hasShadowCasting = false, ShaderGraphVfxAsset shaderGraph = null)
         {
-            ShaderUtils.UpdateMaterial(material, ShaderUtils.MaterialUpdateType.ModifiedShader, shaderGraph);
-            material.SetShaderPassEnabled("MotionVectors", hasMotionVector);
+            if (!hasMotionVector)
+                material.shaderKeywords = material.shaderKeywords.Append(disableMotionVectorKeyword).ToArray();
+            if (!hasShadowCasting)
+                material.shaderKeywords = material.shaderKeywords.Append(disableShadowCasterKeyword).ToArray();
+
             material.SetShaderPassEnabled("ShadowCaster", hasShadowCasting);
+            material.SetShaderPassEnabled("MotionVectors", hasMotionVector);
+
+            ShaderUtils.UpdateMaterial(material, ShaderUtils.MaterialUpdateType.ModifiedShader, shaderGraph);
+        }
+
+        public override bool AllowMaterialOverride(ShaderGraphVfxAsset shaderGraph)
+        {
+            var path = AssetDatabase.GetAssetPath(shaderGraph);
+            var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
+            if (shader.TryGetMetadataOfType<UniversalMetadata>(out var metaData))
+            {
+                return metaData.allowMaterialOverride;
+            }
+
+            return base.AllowMaterialOverride(shaderGraph);
         }
 
         public override bool TryGetQueueOffset(ShaderGraphVfxAsset shaderGraph, VFXMaterialSerializedSettings materialSettings, out int queueOffset)
         {
             //N.B.: Queue offset is always overridable in URP
             queueOffset = 0;
-            if (materialSettings.HasProperty(Rendering.Universal.Property.QueueOffset))
-            {
-                queueOffset = (int)materialSettings.GetFloat(Rendering.Universal.Property.QueueOffset);
-                return true;
-            }
-            return false;
+
+            var path = AssetDatabase.GetAssetPath(shaderGraph);
+            var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (!materialSettings.TryGetFloat(Rendering.Universal.Property.QueueOffset, material, out float queueOffsetFloat))
+                return false;
+            queueOffset = (int)queueOffsetFloat;
+            return true;
         }
 
         public override bool TryGetCastShadowFromMaterial(ShaderGraphVfxAsset shaderGraph, VFXMaterialSerializedSettings materialSettings, out bool castShadow)
@@ -50,9 +98,10 @@ namespace UnityEditor.VFX.URP
             }
             else
             {
-                if (materialSettings.HasProperty(Property.CastShadows))
+                var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (materialSettings.TryGetFloat(Property.CastShadows, material, out float castShadowFloat))
                 {
-                    castShadow = materialSettings.GetFloat(Property.CastShadows) != 0.0f;
+                    castShadow = castShadowFloat != 0.0f;
                     return true;
                 }
             }
@@ -63,7 +112,6 @@ namespace UnityEditor.VFX.URP
         {
             //N.B: About BlendMode multiply, it isn't officially supported by the VFX
             //but when using generatesWithShaderGraph, the shaderGraph generates the appropriate blendState.
-
             var vfxBlendMode = VFXAbstractRenderedOutput.BlendMode.Opaque;
             var path = AssetDatabase.GetAssetPath(shaderGraph);
             var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
@@ -82,12 +130,13 @@ namespace UnityEditor.VFX.URP
             }
             else
             {
-                if (materialSettings.HasProperty(Property.SurfaceType))
+                var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                if (materialSettings.TryGetFloat(Property.SurfaceType, material, out var surfaceTypeFloat))
                 {
-                    var surfaceType = (BaseShaderGUI.SurfaceType)materialSettings.GetFloat(Property.SurfaceType);
-                    if (surfaceType == BaseShaderGUI.SurfaceType.Transparent)
+                    var surfaceType = (BaseShaderGUI.SurfaceType)surfaceTypeFloat;
+                    if (surfaceType == BaseShaderGUI.SurfaceType.Transparent && materialSettings.TryGetFloat(Property.BlendMode, material, out var blendModeTypeFloat))
                     {
-                        var blendMode = (BaseShaderGUI.BlendMode)materialSettings.GetFloat(Property.BlendMode);
+                        var blendMode = (BaseShaderGUI.BlendMode)blendModeTypeFloat;
                         switch (blendMode)
                         {
                             case BaseShaderGUI.BlendMode.Alpha: vfxBlendMode = VFXAbstractRenderedOutput.BlendMode.Alpha; break;
@@ -109,14 +158,53 @@ namespace UnityEditor.VFX.URP
             {
                 switch (metaData.shaderID)
                 {
-                    case ShaderUtils.ShaderID.SG_Unlit:
-                    case ShaderUtils.ShaderID.SG_SpriteUnlit: return "Unlit";
-                    case ShaderUtils.ShaderID.SG_Lit:
-                    case ShaderUtils.ShaderID.SG_SpriteLit:
-                    case ShaderUtils.ShaderID.SG_SpriteCustomLit: return "Lit";
+                    case ShaderUtils.ShaderID.SG_Unlit: return "Unlit";
+                    case ShaderUtils.ShaderID.SG_SpriteUnlit: return "Sprite Unlit";
+                    case ShaderUtils.ShaderID.SG_Lit: return "Lit";
+                    case ShaderUtils.ShaderID.SG_SpriteLit: return "Sprite Lit";
+                    case ShaderUtils.ShaderID.SG_SpriteCustomLit: return "Sprite Custom Lit";
+                    case ShaderUtils.ShaderID.SG_SixWaySmokeLit: return "Six-way Lit";
                 }
             }
             return string.Empty;
+        }
+
+        private const string disableShadowCasterKeyword = "__VFX_DISABLE_SHADOW_CASTER";
+        public static bool DoesVFXControlShadowCaster(Material material, out bool vfxShadowCasterEnabled)
+        {
+            vfxShadowCasterEnabled = false;
+            // Currently only controls shadow caster pass to disable it.
+            if (material.shaderKeywords.Contains(disableShadowCasterKeyword))
+            {
+                vfxShadowCasterEnabled = false;
+                return true;
+            }
+            return false;
+        }
+
+        static void OnShadowCasterPassEnabledChanged(Material material)
+        {
+            if (DoesVFXControlShadowCaster(material, out bool vfxShadowCasterEnabled))
+                material.SetShaderPassEnabled("ShadowCaster", vfxShadowCasterEnabled);
+        }
+
+        private const string disableMotionVectorKeyword = "__VFX_DISABLE_MOTION_VECTOR";
+        public static bool DoesVFXControlMotionVector(Material material, out bool vfxMotionVectorEnabled)
+        {
+            vfxMotionVectorEnabled = false;
+            // Currently only controls motion vector pass to disable it.
+            if (material.shaderKeywords.Contains(disableMotionVectorKeyword))
+            {
+                vfxMotionVectorEnabled = false;
+                return true;
+            }
+            return false;
+        }
+
+        static void OnMotionVectorPassEnabledChanged(Material material)
+        {
+            if (DoesVFXControlMotionVector(material, out bool vfxMotionVectorEnabled))
+                material.SetShaderPassEnabled("MotionVectors", vfxMotionVectorEnabled);
         }
 
         static readonly DependencyCollection ElementSpaceDependencies = new DependencyCollection
@@ -170,25 +258,16 @@ namespace UnityEditor.VFX.URP
             }
         };
 
-        static StructDescriptor AppendVFXInterpolator(StructDescriptor interpolator, VFXContext context, VFXContextCompiledData contextData)
-        {
-            var fields = interpolator.fields.ToList();
-			
-			fields.AddRange(VFXSubTarget.GetVFXInterpolators(UniversalStructs.Varyings.name, context, contextData));
+        static readonly FieldDescriptor[] VaryingsAdditionalFields = {
+            StructFields.Varyings.worldToElement0,
+            StructFields.Varyings.worldToElement1,
+            StructFields.Varyings.worldToElement2,
+            StructFields.Varyings.elementToWorld0,
+            StructFields.Varyings.elementToWorld1,
+            StructFields.Varyings.elementToWorld2,
+        };
 
-            fields.Add(StructFields.Varyings.worldToElement0);
-            fields.Add(StructFields.Varyings.worldToElement1);
-            fields.Add(StructFields.Varyings.worldToElement2);
-
-            fields.Add(StructFields.Varyings.elementToWorld0);
-            fields.Add(StructFields.Varyings.elementToWorld1);
-            fields.Add(StructFields.Varyings.elementToWorld2);
-
-            interpolator.fields = fields.ToArray();
-            return interpolator;
-        }
-
-        static IEnumerable<FieldDescriptor> GenerateSurfaceDescriptionInput(VFXContext context, VFXContextCompiledData contextData)
+        static IEnumerable<FieldDescriptor> GenerateSurfaceDescriptionInput(VFXContext context, VFXTaskCompiledData contextData)
         {
             var alreadyAddedField = new HashSet<string>();
 
@@ -198,7 +277,7 @@ namespace UnityEditor.VFX.URP
                 alreadyAddedField.Add(field.name);
                 yield return field;
             }
-			
+
 			// VFX Material Properties
 			if (contextData.SGInputs != null)
             {
@@ -211,13 +290,13 @@ namespace UnityEditor.VFX.URP
 
 					if (alreadyAddedField.Contains(name))
 						throw new Exception($"Name conflict detected in SurfaceDescriptionInputs: {name}");
-					
+
                     yield return new FieldDescriptor(StructFields.SurfaceDescriptionInputs.name, name, "", shaderValueType);
                 }
-            }			
+            }
         }
 
-        public override ShaderGraphBinder GetShaderGraphDescriptor(VFXContext context, VFXContextCompiledData data)
+        public override ShaderGraphBinder GetShaderGraphDescriptor(VFXContext context, VFXTaskCompiledData data)
         {
             var surfaceDescriptionInputWithVFX = new StructDescriptor
             {
@@ -225,16 +304,15 @@ namespace UnityEditor.VFX.URP
                 populateWithCustomInterpolators = true,
                 fields = GenerateSurfaceDescriptionInput(context, data).ToArray()
             };
-
             return new ShaderGraphBinder()
             {
-                structs = new StructCollection
+                baseStructs = new StructCollection
                 {
                     AttributesMeshVFX, // TODO: Could probably re-use the original HD Attributes Mesh and just ensure Instancing enabled.
-                    AppendVFXInterpolator(UniversalStructs.Varyings, context, data),
-                    surfaceDescriptionInputWithVFX, //N.B. FragInput is in SurfaceDescriptionInputs
                     Structs.VertexDescriptionInputs,
+                    surfaceDescriptionInputWithVFX
                 },
+                varyingsAdditionalFields = VaryingsAdditionalFields,
 
                 fieldDependencies = ElementSpaceDependencies,
                 pragmasReplacement = new []

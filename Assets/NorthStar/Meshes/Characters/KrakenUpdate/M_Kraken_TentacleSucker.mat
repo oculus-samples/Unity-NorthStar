@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10
 --- !u!21 &2100000
 Material:
   serializedVersion: 8
@@ -37,7 +37,8 @@ Material:
   m_CustomRenderQueue: 2000
   stringTagMap:
     RenderType: Opaque
-  disabledShaderPasses: []
+  disabledShaderPasses:
+  - MOTIONVECTORS
   m_LockedProperties: _WetMultiplyColor
   m_SavedProperties:
     serializedVersion: 3
@@ -394,3 +395,4 @@ Material:
     - _WetMultiply: {r: 0.123219974, g: 0.18061036, b: 0.6698113, a: 1}
     - _WetMultiplyColor: {r: 0.7146226, g: 0.9246674, b: 0.9528302, a: 1}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1

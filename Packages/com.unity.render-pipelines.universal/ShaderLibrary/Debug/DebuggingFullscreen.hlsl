@@ -11,9 +11,26 @@ float _RangeMaximum;
 
 TEXTURE2D_X(_DebugTexture);
 TEXTURE2D(_DebugTextureNoStereo);
-SAMPLER(sampler_DebugTexture);
+
+// 2023.3 Deprecated. This is for backwards compatibility. Remove in the future.
+#define sampler_DebugTexture sampler_PointClamp
+
 half4 _DebugTextureDisplayRect;
 int _DebugRenderTargetSupportsStereo;
+float4 _DebugRenderTargetRangeRemap;
+
+// CPU parametrized, non-clamping, range remap. (RangeRemap in common.hlsl saturates!)
+half4 RemapSourceRange(half4 source)
+{
+    float4 r = _DebugRenderTargetRangeRemap;
+    float4 s = source;
+    // Remap(float origFrom, float origTo, float targetFrom, float targetTo, float value)
+    s.r = Remap(r.x, r.y, r.z, r.w, s.r);
+    s.g = Remap(r.x, r.y, r.z, r.w, s.g);
+    s.b = Remap(r.x, r.y, r.z, r.w, s.b);
+    s.a = Remap(r.x, r.y, r.z, r.w, s.a);
+    return half4(s);
+}
 
 bool CalculateDebugColorRenderingSettings(half4 color, float2 uv, inout half4 debugColor)
 {
@@ -25,12 +42,48 @@ bool CalculateDebugColorRenderingSettings(half4 color, float2 uv, inout half4 de
         return true;
     }
 
+    if (_DebugMipInfoMode != DEBUGMIPINFOMODE_NONE)
+    {
+        debugColor = color; // just passing through
+
+        // draw legend
+        switch(_DebugMipInfoMode)
+        {
+            case DEBUGMIPINFOMODE_MIP_COUNT:
+                DrawMipCountLegend(uv, _ScreenSize, debugColor.rgb);
+                break;
+            case DEBUGMIPINFOMODE_MIP_RATIO:
+                DrawMipRatioLegend(uv, _ScreenSize, debugColor.rgb);
+                break;
+            case DEBUGMIPINFOMODE_MIP_STREAMING_STATUS:
+                if (_DebugMipMapStatusMode == DEBUGMIPMAPSTATUSMODE_TEXTURE)
+                    DrawMipStreamingStatusLegend(uv, _ScreenSize, _DebugMipMapShowStatusCode, debugColor.rgb);
+                else
+                    DrawMipStreamingStatusPerMaterialLegend(uv, _ScreenSize, debugColor.rgb);
+                break;
+            case DEBUGMIPINFOMODE_MIP_STREAMING_PERFORMANCE:
+                DrawTextureStreamingPerformanceLegend(uv, _ScreenSize, debugColor.rgb);
+                break;
+            case DEBUGMIPINFOMODE_MIP_STREAMING_PRIORITY:
+                DrawMipPriorityLegend(uv, _ScreenSize, debugColor.rgb);
+                break;
+            case DEBUGMIPINFOMODE_MIP_STREAMING_ACTIVITY:
+                DrawMipRecentlyUpdatedLegend(uv, _ScreenSize, _DebugMipMapStatusMode == DEBUGMIPMAPSTATUSMODE_MATERIAL, debugColor.rgb);
+                break;
+        }
+
+        return true;
+    }
+
     switch(_DebugFullScreenMode)
     {
         case DEBUGFULLSCREENMODE_DEPTH:
+        case DEBUGFULLSCREENMODE_MOTION_VECTOR:
         case DEBUGFULLSCREENMODE_MAIN_LIGHT_SHADOW_MAP:
         case DEBUGFULLSCREENMODE_ADDITIONAL_LIGHTS_SHADOW_MAP:
+        case DEBUGFULLSCREENMODE_ADDITIONAL_LIGHTS_COOKIE_ATLAS:
         case DEBUGFULLSCREENMODE_REFLECTION_PROBE_ATLAS:
+        case DEBUGFULLSCREENMODE_STP:
         {
             float2 uvOffset = half2(uv.x - _DebugTextureDisplayRect.x, uv.y - _DebugTextureDisplayRect.y);
 
@@ -45,7 +98,31 @@ bool CalculateDebugColorRenderingSettings(half4 color, float2 uv, inout half4 de
                 else
                     sampleColor = SAMPLE_TEXTURE2D(_DebugTextureNoStereo, sampler_DebugTexture, debugTextureUv);
 
-                debugColor = _DebugFullScreenMode == DEBUGFULLSCREENMODE_DEPTH ? half4(sampleColor.rrr, 1) : sampleColor;
+                // Optionally remap source to valid visualization range.
+                if(any(_DebugRenderTargetRangeRemap != 0))
+                {
+                    sampleColor.rgb = RemapSourceRange(sampleColor).rgb;
+                }
+
+                if (_DebugFullScreenMode == DEBUGFULLSCREENMODE_DEPTH)
+                {
+                    debugColor = half4(sampleColor.rrr, 1);
+                }
+                else if (_DebugFullScreenMode == DEBUGFULLSCREENMODE_MOTION_VECTOR)
+                {
+                    // Motion vector is RG only.
+                    debugColor = half4(sampleColor.rg, 0, 1);
+                }
+                else if (_DebugFullScreenMode == DEBUGFULLSCREENMODE_STP)
+                {
+                    // This is encoded in gamma 2.0 (so the square is needed to get it back to linear).
+                    debugColor = sampleColor * sampleColor;
+                }
+                else
+                {
+                    debugColor = sampleColor;
+                }
+
                 return true;
             }
             else
@@ -67,7 +144,6 @@ bool CalculateDebugColorValidationSettings(half4 color, float2 uv, inout half4 d
     {
         case DEBUGVALIDATIONMODE_HIGHLIGHT_NAN_INF_NEGATIVE:
         {
-#if !defined (SHADER_API_GLES)
             if (AnyIsNaN(color))
             {
                 debugColor = half4(1, 0, 0, 1);
@@ -76,9 +152,7 @@ bool CalculateDebugColorValidationSettings(half4 color, float2 uv, inout half4 d
             {
                 debugColor = half4(0, 1, 0, 1);
             }
-            else
-#endif
-            if (color.r < 0 || color.g < 0 || color.b < 0 || color.a < 0)
+            else if (color.r < 0 || color.g < 0 || color.b < 0 || color.a < 0)
             {
                 debugColor = half4(0, 0, 1, 1);
             }

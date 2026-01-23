@@ -26,7 +26,7 @@ git clone https://github.com/oculus-samples/Unity-NorthStar.git
 
 ## How to Run the Project in Unity
 
-1. Use Unity 2022.3.34f1 or newer.
+1. Use Unity 6000.0.59f2 or newer.
 2. Load the [Assets/NorthStar/Scenes/#GameplayBeats/Launch.unity](./Assets/NorthStar/Scenes/%23GameplayBeats/Launch.unity) scene.
 3. To test in the Editor, use Quest Link or Meta XR Simulator:
     <details>
@@ -137,7 +137,7 @@ More information is available in the [Documentation](./Documentation) section of
 
 This project uses the following plugins and software:
 
-- [Unity](https://unity.com/download) 2022.3.34f1 or newer.
+- [Unity](https://unity.com/download) 6000.0.59f2 or newer.
 - [Meta Core XR SDK](https://developers.meta.com/horizon/downloads/package/unity-integration/).
 - [Meta Movement SDK](https://github.com/oculus-samples/Unity-Movement).
 - [Meta Interaction SDK](https://developers.meta.com/horizon/documentation/unity/unity-isdk-interaction-sdk-overview/).

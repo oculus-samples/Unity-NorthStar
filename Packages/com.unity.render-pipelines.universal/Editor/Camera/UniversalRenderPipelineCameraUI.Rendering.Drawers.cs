@@ -13,10 +13,6 @@ namespace UnityEditor.Rendering.Universal
         {
             static bool s_PostProcessingWarningShown = false;
 
-            static readonly CED.IDrawer PostProcessingWarningInit = CED.Group(
-                (serialized, owner) => s_PostProcessingWarningShown = false
-            );
-
             private static readonly CED.IDrawer PostProcessingWarningDrawer = CED.Conditional(
                 (serialized, owner) => IsAnyRendererHasPostProcessingEnabled(serialized, UniversalRenderPipeline.asset) && serialized.renderPostProcessing.boolValue,
                 (serialized, owner) =>
@@ -36,6 +32,10 @@ namespace UnityEditor.Rendering.Universal
             private static readonly CED.IDrawer DisabledPostProcessingAAWarningDrawer = CED.Conditional(
                 (serialized, owner) => !serialized.renderPostProcessing.boolValue && (AntialiasingMode)serialized.antialiasing.intValue != AntialiasingMode.None,
                 (serialized, owner) => EditorGUILayout.HelpBox(Styles.disabledPostprocessingAntiAliasWarning, MessageType.Warning));
+
+            private static readonly CED.IDrawer MSAAWarningDrawer = CED.Conditional(
+                (serialized, owner) => (GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset asset && asset.msaaSampleCount > 1) && serialized.baseCameraSettings.allowMSAA.boolValue == true && (AntialiasingMode)serialized.antialiasing.intValue == AntialiasingMode.TemporalAntiAliasing,
+                (serialized, owner) => EditorGUILayout.HelpBox(Styles.MSAAWarning, MessageType.Warning));
 
             private static readonly CED.IDrawer PostProcessingStopNaNsWarningDrawer = CED.Conditional(
                 (serialized, owner) => !s_PostProcessingWarningShown && IsAnyRendererHasPostProcessingEnabled(serialized, UniversalRenderPipeline.asset) && serialized.stopNaNs.boolValue,
@@ -64,6 +64,7 @@ namespace UnityEditor.Rendering.Universal
                     ),
                 PostProcessingAAWarningDrawer,
                 DisabledPostProcessingAAWarningDrawer,
+                MSAAWarningDrawer,
                 CED.Conditional(
                     (serialized, owner) => !serialized.antialiasing.hasMultipleDifferentValues,
                     CED.Group(
@@ -88,10 +89,6 @@ namespace UnityEditor.Rendering.Universal
                     CameraUI.Rendering.Drawer_Rendering_StopNaNs
                     ),
                 PostProcessingStopNaNsWarningDrawer,
-                CED.Conditional(
-                    (serialized, owner) => serialized.stopNaNs.boolValue && CoreEditorUtils.buildTargets.Contains(GraphicsDeviceType.OpenGLES2),
-                    (serialized, owner) => EditorGUILayout.HelpBox(Styles.stopNaNsMessage, MessageType.Warning)
-                    ),
                 CED.Group(
                     CameraUI.Rendering.Drawer_Rendering_Dithering
                     ),
@@ -119,6 +116,8 @@ namespace UnityEditor.Rendering.Universal
 
             public static readonly CED.IDrawer Drawer;
 
+            public static readonly CED.IDrawer DrawerPreset;
+
             static Rendering()
             {
                 Drawer = CED.AdditionalPropertiesFoldoutGroup(
@@ -128,7 +127,6 @@ namespace UnityEditor.Rendering.Universal
                     ExpandableAdditional.Rendering,
                     k_ExpandedAdditionalState,
                     CED.Group(
-                        PostProcessingWarningInit,
                         CED.Group(
                             DrawerRenderingRenderer
                         ),
@@ -140,20 +138,21 @@ namespace UnityEditor.Rendering.Universal
                         )
                     ),
                     CED.noop,
-                    FoldoutOption.Indent
+                    FoldoutOption.Indent,
+                    (serialized, owner) => s_PostProcessingWarningShown = false
+                );
+
+                DrawerPreset = CED.FoldoutGroup(
+                    CameraUI.Rendering.Styles.header,
+                    Expandable.Rendering,
+                    k_ExpandedState,
+                    FoldoutOption.Indent,
+                    CED.Group(
+                        CameraUI.Rendering.Drawer_Rendering_CullingMask,
+                        CameraUI.Rendering.Drawer_Rendering_OcclusionCulling
+                    )
                 );
             }
-
-            public static readonly CED.IDrawer DrawerPreset = CED.FoldoutGroup(
-                CameraUI.Rendering.Styles.header,
-                Expandable.Rendering,
-                k_ExpandedState,
-                FoldoutOption.Indent,
-                CED.Group(
-                    CameraUI.Rendering.Drawer_Rendering_CullingMask,
-                    CameraUI.Rendering.Drawer_Rendering_OcclusionCulling
-                )
-            );
 
             static void DrawerRenderingRenderer(UniversalRenderPipelineSerializedCamera p, Editor owner)
             {
@@ -215,9 +214,6 @@ namespace UnityEditor.Rendering.Universal
                         p.antialiasing.intValue = selectedValue;
                 }
                 EditorGUI.EndProperty();
-
-                if (PlayerSettings.useHDRDisplay && (AntialiasingMode)p.antialiasing.intValue == AntialiasingMode.FastApproximateAntialiasing)
-                    EditorGUILayout.HelpBox(Styles.unsupportedFXAAWithHDROutputWarning, MessageType.Warning);
             }
 
             static void DrawerRenderingClearDepth(UniversalRenderPipelineSerializedCamera p, Editor owner)
@@ -233,9 +229,6 @@ namespace UnityEditor.Rendering.Universal
             static void DrawerRenderingSMAAQuality(UniversalRenderPipelineSerializedCamera p, Editor owner)
             {
                 EditorGUILayout.PropertyField(p.antialiasingQuality, Styles.antialiasingQuality);
-
-                if (CoreEditorUtils.buildTargets.Contains(GraphicsDeviceType.OpenGLES2))
-                    EditorGUILayout.HelpBox(Styles.SMAANotSupported, MessageType.Warning);
             }
 
             static void DrawerRenderingTAAQuality(UniversalRenderPipelineSerializedCamera p, Editor owner)
@@ -256,7 +249,7 @@ namespace UnityEditor.Rendering.Universal
                 {
                     p.taaFrameInfluence.floatValue = 1.0f - EditorGUILayout.Slider(Styles.taaBaseBlendFactor, 1.0f - p.taaFrameInfluence.floatValue, 0.6f, 0.98f);
                     EditorGUILayout.Slider(p.taaJitterScale, 0.0f, 1.0f, Styles.taaJitterScale);
-                    EditorGUILayout.Slider(p.taaMipBias, -0.5f, 0.0f, Styles.taaMipBias);
+                    EditorGUILayout.Slider(p.taaMipBias, -1.0f, 0.0f, Styles.taaMipBias);
 
                     if(p.taaQuality.intValue >= (int)TemporalAAQuality.Medium)
                         EditorGUILayout.Slider(p.taaVarianceClampScale, 0.6f, 1.2f, Styles.taaVarianceClampScale);

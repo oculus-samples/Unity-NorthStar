@@ -6,6 +6,22 @@ using UnityEngine.Rendering.Universal;
 using System.Collections.Generic;
 using System.Reflection;
 
+namespace UnityEditor.Rendering.Universal
+{
+    /// <summary>
+    /// Editor script for the <c>RenderObjects</c> renderer feature.
+    /// </summary>
+    [CustomEditor(typeof(RenderObjects), true)]
+    public class ScriptableRendererFeatureEditor : Editor
+    {
+        /// <inheritdoc/>
+        public override void OnInspectorGUI()
+        {
+            DrawPropertiesExcluding(serializedObject, "m_Script");
+        }
+    }
+}
+
 namespace UnityEditor.Experimental.Rendering.Universal
 {
     [CustomPropertyDrawer(typeof(RenderObjects.RenderObjectsSettings), true)]
@@ -284,7 +300,7 @@ namespace UnityEditor.Experimental.Rendering.Universal
                 EditorGUI.BeginChangeCheck();
                 var newOffset = EditorGUI.Vector3Field(rect, Styles.positionOffset, new Vector3(offset.x, offset.y, offset.z));
                 if (EditorGUI.EndChangeCheck())
-                    m_CameraOffset.vector4Value = new Vector4(newOffset.x, newOffset.y, newOffset.z, 1f);
+                    m_CameraOffset.vector4Value = new Vector4(newOffset.x, newOffset.y, newOffset.z, 0f);
                 rect.y += Styles.defaultLineSpace;
                 //Restore prev camera projections
                 EditorGUI.PropertyField(rect, m_RestoreCamera, Styles.restoreCamera);

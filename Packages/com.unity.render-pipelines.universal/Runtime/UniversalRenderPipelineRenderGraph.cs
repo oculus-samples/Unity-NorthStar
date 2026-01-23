@@ -1,33 +1,28 @@
-using UnityEngine.Experimental.Rendering.RenderGraphModule;
+using System.Collections.Generic;
+using UnityEngine.Rendering.RenderGraphModule;
 
 namespace UnityEngine.Rendering.Universal
 {
     public sealed partial class UniversalRenderPipeline
     {
-        static void RecordRenderGraph(RenderGraph renderGraph, ScriptableRenderContext context, ref RenderingData renderingData)
+        static void RecordRenderGraph(RenderGraph renderGraph, ScriptableRenderContext context, ScriptableRenderer renderer)
         {
-            var renderer = renderingData.cameraData.renderer;
-
-            renderer.RecordRenderGraph(renderGraph, context, ref renderingData);
+            renderer.RecordRenderGraph(renderGraph, context);
         }
 
-        static void RecordAndExecuteRenderGraph(RenderGraph renderGraph, ScriptableRenderContext context, ref RenderingData renderingData)
+        static void RecordAndExecuteRenderGraph(RenderGraph renderGraph, ScriptableRenderContext context, ScriptableRenderer renderer, CommandBuffer cmd, Camera camera, string cameraName)
         {
-            CommandBuffer cmd = renderingData.commandBuffer;
-            Camera camera = renderingData.cameraData.camera;
-            RenderGraphParameters rgParams = new RenderGraphParameters()
+            RenderGraphParameters rgParams = new RenderGraphParameters
             {
-                // TODO Rendergraph - we are reusing the sampler name, as camera.name does an alloc. we could probably cache this as the current string we get is a bit too informative
-                executionName = Profiling.TryGetOrAddCameraSampler(camera).name,
+                executionName = cameraName,
                 commandBuffer = cmd,
                 scriptableRenderContext = context,
                 currentFrameIndex = Time.frameCount,
             };
 
-            using (renderGraph.RecordAndExecute(rgParams))
-            {
-                RecordRenderGraph(renderGraph, context, ref renderingData);
-            }
+            renderGraph.BeginRecording(rgParams);
+            RecordRenderGraph(renderGraph, context, renderer);
+            renderGraph.EndRecordingAndExecute();
         }
     }
 }

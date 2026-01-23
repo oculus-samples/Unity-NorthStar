@@ -4,6 +4,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
+using UnityEngine.Experimental.Rendering;
 
 namespace UnityEngine.Rendering.Universal.Internal
 {
@@ -72,15 +73,15 @@ namespace UnityEngine.Rendering.Universal.Internal
 
             desc.msaaSamples = m_A.msaa;
             if (desc.msaaSamples > 1)
-                RenderingUtils.ReAllocateIfNeeded(ref m_A.rtMSAA, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_A.name);
+                RenderingUtils.ReAllocateHandleIfNeeded(ref m_A.rtMSAA, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_A.name);
 
             desc.msaaSamples = m_B.msaa;
             if (desc.msaaSamples > 1)
-                RenderingUtils.ReAllocateIfNeeded(ref m_B.rtMSAA, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_B.name);
+                RenderingUtils.ReAllocateHandleIfNeeded(ref m_B.rtMSAA, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_B.name);
 
             desc.msaaSamples = 1;
-            RenderingUtils.ReAllocateIfNeeded(ref m_A.rtResolve, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_A.name);
-            RenderingUtils.ReAllocateIfNeeded(ref m_B.rtResolve, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_B.name);
+            RenderingUtils.ReAllocateHandleIfNeeded(ref m_A.rtResolve, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_A.name);
+            RenderingUtils.ReAllocateHandleIfNeeded(ref m_B.rtResolve, desc, m_FilterMode, TextureWrapMode.Clamp, name: m_B.name);
             cmd.SetGlobalTexture(m_A.name, m_A.rtResolve);
             cmd.SetGlobalTexture(m_B.name, m_B.rtResolve);
         }
@@ -93,7 +94,7 @@ namespace UnityEngine.Rendering.Universal.Internal
 
         public void SetCameraSettings(RenderTextureDescriptor desc, FilterMode filterMode)
         {
-            desc.depthBufferBits = 0;
+            desc.depthStencilFormat = GraphicsFormat.None;
             m_Desc = desc;
             m_FilterMode = filterMode;
 

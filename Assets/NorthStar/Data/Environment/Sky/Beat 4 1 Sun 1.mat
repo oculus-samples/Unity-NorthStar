@@ -26,6 +26,7 @@ Material:
   disabledShaderPasses:
   - SHADOWCASTER
   - DepthOnly
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
@@ -51,6 +52,7 @@ Material:
     - _Cloud_Direction: 0.1
     - _Cloud_Speed: 0.001
     - _DstBlend: 10
+    - _DstBlendAlpha: 10
     - _IS_CELESTIAL_OBJECT: 1
     - _SrcBlend: 5
     - _Surface: 1
@@ -59,6 +61,7 @@ Material:
     - _Celestial_Color: {r: 0.40686628, g: 0.26840392, b: 0.25775298, a: 1}
     - _Celestial_Light_Color: {r: 0, g: 0, b: 0, a: 1}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1
 --- !u!114 &1130983063974069177
 MonoBehaviour:
   m_ObjectHideFlags: 11
@@ -71,4 +74,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10

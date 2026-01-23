@@ -33,6 +33,10 @@ struct GrassVertexOutput
 #endif
     half4 color                     : TEXCOORD7;
 
+#ifdef USE_APV_PROBE_OCCLUSION
+    float4 probeOcclusion           : TEXCOORD8;
+#endif
+
     float4 clipPos                  : SV_POSITION;
     UNITY_VERTEX_INPUT_INSTANCE_ID
     UNITY_VERTEX_OUTPUT_STEREO
@@ -43,6 +47,8 @@ void InitializeInputData(GrassVertexOutput input, out InputData inputData)
     inputData = (InputData)0;
 
     inputData.positionWS = input.posWSShininess.xyz;
+
+    inputData.positionCS = input.clipPos;
 
     half3 viewDirWS = input.viewDir;
     viewDirWS = SafeNormalize(viewDirWS);
@@ -72,12 +78,21 @@ void InitializeInputData(GrassVertexOutput input, out InputData inputData)
 
 #if defined(DYNAMICLIGHTMAP_ON)
     inputData.bakedGI = SAMPLE_GI(input.lightmapUV, NOT_USED, input.vertexSH, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+#elif !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    inputData.bakedGI = SAMPLE_GI(input.vertexSH,
+        GetAbsolutePositionWS(inputData.positionWS),
+        inputData.normalWS,
+        inputData.viewDirectionWS,
+        input.clipPos.xy,
+        input.probeOcclusion,
+        inputData.shadowMask);
 #else
     inputData.bakedGI = SAMPLE_GI(input.lightmapUV, input.vertexSH, inputData.normalWS);
+    inputData.shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
 #endif
 
     inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.clipPos);
-    inputData.shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
 
     #if defined(DEBUG_DISPLAY)
     #if defined(DYNAMICLIGHTMAP_ON)
@@ -86,6 +101,9 @@ void InitializeInputData(GrassVertexOutput input, out InputData inputData)
     inputData.staticLightmapUV = input.lightmapUV;
     #else
     inputData.vertexSH = input.vertexSH;
+    #endif
+    #if defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;
     #endif
     #endif
 }
@@ -110,7 +128,7 @@ void InitializeVertData(GrassVertexInput input, inout GrassVertexOutput vertData
     // see DECLARE_LIGHTMAP_OR_SH macro.
     // The following funcions initialize the correct variable with correct data
     OUTPUT_LIGHTMAP_UV(input.lightmapUV, unity_LightmapST, vertData.lightmapUV);
-    OUTPUT_SH(vertData.normal, vertData.vertexSH);
+    OUTPUT_SH4(vertexInput.positionWS, vertData.normal.xyz, GetWorldSpaceNormalizeViewDir(vertexInput.positionWS), vertData.vertexSH, vertData.probeOcclusion);
 
     half3 vertexLight = VertexLighting(vertexInput.positionWS, vertData.normal.xyz);
 #if defined(_FOG_FRAGMENT)
@@ -182,7 +200,7 @@ inline void InitializeSimpleLitSurfaceData(GrassVertexOutput input, out SurfaceD
     outSurfaceData.alpha = alpha;
     outSurfaceData.albedo = diffuse;
     outSurfaceData.metallic = 0.0; // unused
-    outSurfaceData.specular = 0.1;// SampleSpecularSmoothness(uv, diffuseAlpha.a, _SpecColor, TEXTURE2D_ARGS(_SpecGlossMap, sampler_SpecGlossMap));
+    outSurfaceData.specular = 0.0; // To match forward pass (UUM-113119)
     outSurfaceData.smoothness = input.posWSShininess.w;
     outSurfaceData.normalTS = 0.0; // unused
     outSurfaceData.occlusion = 1.0;
@@ -204,7 +222,7 @@ half4 LitPassFragmentGrass(GrassVertexOutput input) : SV_Target
 
     InputData inputData;
     InitializeInputData(input, inputData);
-    SETUP_DEBUG_TEXTURE_DATA(inputData, input.uv, _MainTex);
+    SETUP_DEBUG_TEXTURE_DATA_FOR_TEX(inputData, input.uv, _MainTex);
 
 #ifdef TERRAIN_GBUFFER
     half4 color = half4(inputData.bakedGI * surfaceData.albedo + surfaceData.emission, surfaceData.alpha);
@@ -253,6 +271,24 @@ GrassVertexDepthOnlyOutput DepthOnlyVertex(GrassVertexDepthOnlyInput v)
     // _WaveAndDistance.z == 0 for MeshLit
     float waveAmount = v.color.a * _WaveAndDistance.z;
     o.color = TerrainWaveGrass(v.vertex, waveAmount, v.color);
+
+    InitializeVertData(v, o);
+
+    return o;
+}
+
+GrassVertexDepthOnlyOutput DepthOnlyBillboardVertex(GrassVertexDepthOnlyInput v)
+{
+    GrassVertexDepthOnlyOutput o = (GrassVertexDepthOnlyOutput) 0;
+    UNITY_SETUP_INSTANCE_ID(v);
+    UNITY_TRANSFER_INSTANCE_ID(v, o);
+    UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+
+    TerrainBillboardGrass (v.vertex, v.tangent.xy);
+
+    // wave amount defined by the grass height
+    float waveAmount = v.tangent.y;
+    o.color = TerrainWaveGrass (v.vertex, waveAmount, v.color);
 
     InitializeVertData(v, o);
 

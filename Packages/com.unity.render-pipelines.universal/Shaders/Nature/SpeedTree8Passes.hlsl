@@ -3,6 +3,7 @@
 
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityGBuffer.hlsl"
+#include "Packages/com.unity.shadergraph/ShaderGraphLibrary/Nature/SpeedTreeCommon.hlsl"
 #include "SpeedTreeUtility.hlsl"
 #if defined(LOD_FADE_CROSSFADE)
     #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl"
@@ -96,15 +97,34 @@ struct SpeedTreeFragmentInput
 
 void InitializeData(inout SpeedTreeVertexInput input, float lodValue)
 {
-#if defined(LOD_FADE_PERCENTAGE) && (!defined(LOD_FADE_CROSSFADE) && !defined(EFFECT_BILLBOARD))
-        input.vertex.xyz = lerp(input.vertex.xyz, input.texcoord2.xyz, lodValue);
+#if !defined(EFFECT_BILLBOARD)
+    #if defined(LOD_FADE_PERCENTAGE) && (!defined(LOD_FADE_CROSSFADE))
+    input.vertex.xyz = lerp(input.vertex.xyz, input.texcoord2.xyz, lodValue);
+    #endif
+
+    // geometry type
+    float geometryType = (int) (input.texcoord3.w + 0.25);
+    bool leafTwo = false;
+    if (geometryType > GEOM_TYPE_FACINGLEAF)
+    {
+        geometryType -= 2;
+        leafTwo = true;
+    }
+
+    // leaf facing
+    if (geometryType == GEOM_TYPE_FACINGLEAF)
+    {
+        float3 anchor = float3(input.texcoord1.zw, input.texcoord2.w);
+        input.vertex.xyz = DoLeafFacing(input.vertex.xyz, anchor);
+    }
 #endif
 
     // wind
     #if defined(ENABLE_WIND) && !defined(_WINDQUALITY_NONE)
-        if (_WindEnabled > 0)
+        float windEnabled = dot(_ST_WindVector.xyz, _ST_WindVector.xyz) > 0.0f ? 1.0f : 0.0f;
+        if (windEnabled > 0)
         {
-            float3 rotatedWindVector = mul(_ST_WindVector.xyz, (float3x3)unity_ObjectToWorld);
+            float3 rotatedWindVector = mul(_ST_WindVector.xyz, (float3x3)UNITY_MATRIX_M);
             float windLength = length(rotatedWindVector);
             if (windLength < 1e-5)
             {
@@ -113,18 +133,10 @@ void InitializeData(inout SpeedTreeVertexInput input, float lodValue)
             }
             rotatedWindVector /= windLength;
 
-            float3 treePos = float3(unity_ObjectToWorld[0].w, unity_ObjectToWorld[1].w, unity_ObjectToWorld[2].w);
+            float3 treePos = float3(UNITY_MATRIX_M[0].w, UNITY_MATRIX_M[1].w, UNITY_MATRIX_M[2].w);
             float3 windyPosition = input.vertex.xyz;
 
             #ifndef EFFECT_BILLBOARD
-                // geometry type
-                float geometryType = (int)(input.texcoord3.w + 0.25);
-                bool leafTwo = false;
-                if (geometryType > GEOM_TYPE_FACINGLEAF)
-                {
-                    geometryType -= 2;
-                    leafTwo = true;
-                }
 
                 // leaves
                 if (geometryType > GEOM_TYPE_FROND)
@@ -132,15 +144,7 @@ void InitializeData(inout SpeedTreeVertexInput input, float lodValue)
                     // remove anchor position
                     float3 anchor = float3(input.texcoord1.zw, input.texcoord2.w);
                     windyPosition -= anchor;
-
-                    if (geometryType == GEOM_TYPE_FACINGLEAF)
-                    {
-                        // face camera-facing leaf to camera
-                        float offsetLen = length(windyPosition);
-                        windyPosition = mul(windyPosition.xyz, (float3x3)UNITY_MATRIX_IT_MV); // inv(MV) * windyPosition
-                        windyPosition = normalize(windyPosition) * offsetLen; // make sure the offset vector is still scaled
-                    }
-
+                    
                     // leaf wind
                     #if defined(_WINDQUALITY_FAST) || defined(_WINDQUALITY_BETTER) || defined(_WINDQUALITY_BEST)
                         #ifdef _WINDQUALITY_BEST
@@ -168,7 +172,7 @@ void InitializeData(inout SpeedTreeVertexInput input, float lodValue)
 
                 // branch wind (applies to all 3D geometry)
                 #if defined(_WINDQUALITY_BETTER) || defined(_WINDQUALITY_BEST) || defined(_WINDQUALITY_PALM)
-                    float3 rotatedBranchAnchor = normalize(mul(_ST_WindBranchAnchor.xyz, (float3x3)unity_ObjectToWorld)) * _ST_WindBranchAnchor.w;
+                    float3 rotatedBranchAnchor = normalize(mul(_ST_WindBranchAnchor.xyz, (float3x3)UNITY_MATRIX_M)) * _ST_WindBranchAnchor.w;
                     windyPosition = BranchWind(bPalmWind, windyPosition, treePos, float4(input.texcoord.zw, 0, 0), rotatedWindVector, rotatedBranchAnchor);
                 #endif
 
@@ -275,7 +279,7 @@ SpeedTreeVertexOutput SpeedTree8Vert(SpeedTreeVertexInput input)
 
     output.clipPos = vertexInput.positionCS;
 
-    OUTPUT_SH(output.normalWS.xyz, output.vertexSH);
+    OUTPUT_SH4(vertexInput.positionWS, output.normalWS.xyz, GetWorldSpaceNormalizeViewDir(vertexInput.positionWS), output.vertexSH, output.probeOcclusion);
 
     return output;
 }
@@ -342,7 +346,18 @@ void InitializeInputData(SpeedTreeFragmentInput input, half3 normalTS, out Input
 
     inputData.fogCoord = InitializeInputDataFog(float4(input.interpolated.positionWS, 1.0), input.interpolated.fogFactorAndVertexLight.x);
     inputData.vertexLighting = input.interpolated.fogFactorAndVertexLight.yzw;
+#if !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    inputData.bakedGI = SAMPLE_GI(input.interpolated.vertexSH,
+        GetAbsolutePositionWS(inputData.positionWS),
+        inputData.normalWS,
+        inputData.viewDirectionWS,
+        inputData.positionCS.xy,
+        input.probeOcclusion,
+        inputData.shadowMask);
+#else
     inputData.bakedGI = SAMPLE_GI(NOT_USED, input.interpolated.vertexSH, inputData.normalWS);
+#endif
+
     inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.interpolated.clipPos);
     inputData.shadowMask = half4(1, 1, 1, 1); // No GI currently.
 
@@ -427,7 +442,7 @@ half4 SpeedTree8Frag(SpeedTreeFragmentInput input) : SV_Target
 
     InputData inputData;
     InitializeInputData(input, normalTs, inputData);
-    SETUP_DEBUG_TEXTURE_DATA(inputData, input.interpolated.uv, _MainTex);
+    SETUP_DEBUG_TEXTURE_DATA(inputData, input.interpolated.uv);
 
 #if defined(GBUFFER) || defined(EFFECT_SUBSURFACE)
     Light mainLight = GetMainLight(inputData.shadowCoord, inputData.positionWS, inputData.shadowMask);

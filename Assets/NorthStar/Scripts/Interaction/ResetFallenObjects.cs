@@ -29,7 +29,7 @@ namespace NorthStar
                     transform.rotation = m_originalPositionMarker.rotation;
                     if (m_setKinematicOnReset && TryGetComponent(out Rigidbody rb))
                     {
-                        rb.velocity = Vector3.zero;
+                        rb.linearVelocity = Vector3.zero;
                         rb.angularVelocity = Vector3.zero;
                         rb.isKinematic = true;
                         _ = StartCoroutine(DisableKinematic());

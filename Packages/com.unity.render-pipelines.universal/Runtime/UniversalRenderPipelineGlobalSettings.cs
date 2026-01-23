@@ -1,7 +1,12 @@
 using System;
+using System.IO;
+using System.ComponentModel;
 using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine.Serialization;
+#if UNITY_EDITOR
+using UnityEditor;
+using UnityEditor.Rendering;
+#endif
 
 namespace UnityEngine.Rendering.Universal
 {
@@ -11,48 +16,50 @@ namespace UnityEngine.Rendering.Universal
     /// - light layer names
     /// </summary>
     [URPHelpURL("urp-global-settings")]
-    partial class UniversalRenderPipelineGlobalSettings : RenderPipelineGlobalSettings, ISerializationCallbackReceiver
+    [DisplayInfo(name = "URP Global Settings Asset", order = CoreUtils.Sections.section4 + 2)]
+    [SupportedOnRenderPipeline(typeof(UniversalRenderPipelineAsset))]
+    [DisplayName("URP")]
+    partial class UniversalRenderPipelineGlobalSettings : RenderPipelineGlobalSettings<UniversalRenderPipelineGlobalSettings, UniversalRenderPipeline>
     {
+        [SerializeField] RenderPipelineGraphicsSettingsContainer m_Settings = new();
+        protected override List<IRenderPipelineGraphicsSettings> settingsList => m_Settings.settingsList;
+
         #region Version system
 
+        internal bool IsAtLastVersion() => k_LastVersion == m_AssetVersion;
+
+        internal const int k_LastVersion = 8;
+
 #pragma warning disable CS0414
-        [SerializeField] int k_AssetVersion = 3;
+        [SerializeField][FormerlySerializedAs("k_AssetVersion")]
+        internal int m_AssetVersion = k_LastVersion;
 #pragma warning restore CS0414
 
-        public void OnBeforeSerialize()
-        {
-        }
-
-        public void OnAfterDeserialize()
-        {
 #if UNITY_EDITOR
-            if (k_AssetVersion != 3)
-            {
-                EditorApplication.delayCall += () => UpgradeAsset(this.GetInstanceID());
-            }
-#endif
-        }
-
-#if UNITY_EDITOR
-        static void UpgradeAsset(int assetInstanceID)
+        public static void UpgradeAsset(int assetInstanceID)
         {
-            UniversalRenderPipelineGlobalSettings asset = EditorUtility.InstanceIDToObject(assetInstanceID) as UniversalRenderPipelineGlobalSettings;
+            if (EditorUtility.InstanceIDToObject(assetInstanceID) is not UniversalRenderPipelineGlobalSettings asset)
+                return;
 
-            if (asset.k_AssetVersion < 2)
+            int assetVersionBeforeUpgrade = asset.m_AssetVersion;
+
+            if (asset.m_AssetVersion < 2)
             {
 #pragma warning disable 618 // Obsolete warning
-                // Renamed supportRuntimeDebugDisplay => stripDebugVariants, which results in inverted logic
+                // Renamed supportRuntimeDebugDisplay => m_StripDebugVariants, which results in inverted logic
                 asset.m_StripDebugVariants = !asset.supportRuntimeDebugDisplay;
-                asset.k_AssetVersion = 2;
+                asset.m_AssetVersion = 2;
 #pragma warning restore 618 // Obsolete warning
 
                 // For old test projects lets keep post processing stripping enabled, as huge chance they did not used runtime profile creating
 #if UNITY_INCLUDE_TESTS
+#pragma warning disable 618 // Obsolete warning
                 asset.m_StripUnusedPostProcessingVariants = true;
+#pragma warning restore 618 // Obsolete warning
 #endif
             }
 
-            if (asset.k_AssetVersion < 3)
+            if (asset.m_AssetVersion < 3)
             {
                 int index = 0;
                 asset.m_RenderingLayerNames = new string[8];
@@ -66,181 +73,247 @@ namespace UnityEngine.Rendering.Universal
                 asset.m_RenderingLayerNames[index++] = asset.lightLayerName6;
                 asset.m_RenderingLayerNames[index++] = asset.lightLayerName7;
 #pragma warning restore 618 // Obsolete warning
-                asset.k_AssetVersion = 3;
-                asset.UpdateRenderingLayerNames();
+                asset.m_AssetVersion = 3;
+                DecalProjector.UpdateAllDecalProperties();
             }
 
-            EditorUtility.SetDirty(asset);
+            if (asset.m_AssetVersion < 4)
+            {
+#pragma warning disable 618 // Type or member is obsolete
+                asset.m_ShaderStrippingSetting.exportShaderVariants                 = asset.m_ExportShaderVariants;
+                asset.m_ShaderStrippingSetting.shaderVariantLogLevel                = asset.m_ShaderVariantLogLevel;
+                asset.m_ShaderStrippingSetting.stripRuntimeDebugShaders             = asset.m_StripDebugVariants;
+                asset.m_URPShaderStrippingSetting.stripScreenCoordOverrideVariants  = asset.m_StripScreenCoordOverrideVariants;
+                asset.m_URPShaderStrippingSetting.stripUnusedPostProcessingVariants = asset.m_StripUnusedPostProcessingVariants;
+                asset.m_URPShaderStrippingSetting.stripUnusedVariants               = asset.m_StripUnusedVariants;
+#pragma warning restore 618
+
+                asset.m_AssetVersion = 4;
+            }
+
+            if (asset.m_AssetVersion < 5)
+            {
+#pragma warning disable 618 // Type or member is obsolete
+                asset.m_ObsoleteDefaultVolumeProfile = GetOrCreateDefaultVolumeProfile(asset.m_ObsoleteDefaultVolumeProfile);
+#pragma warning restore 618 // Type or member is obsolete
+                asset.m_AssetVersion = 5;
+            }
+
+            if (asset.m_AssetVersion < 6)
+            {
+                MigrateToRenderPipelineGraphicsSettings(asset);
+#pragma warning disable 618 // Type or member is obsolete
+                asset.m_EnableRenderGraph = false;
+#pragma warning restore 618 // Type or member is obsolete
+                asset.m_AssetVersion = 6;
+            }
+
+            if (asset.m_AssetVersion < 7)
+            {
+#pragma warning disable 618 // Type or member is obsolete
+                if (asset.m_RenderingLayerNames != null)
+                {
+                    for (int i = 1; i < asset.m_RenderingLayerNames.Length; i++)
+                    {
+                        if (i >= RenderingLayerMask.GetRenderingLayerCount())
+                            RenderPipelineEditorUtility.TryAddRenderingLayerName("");
+
+                        var name = asset.m_RenderingLayerNames[i];
+                        if(string.IsNullOrWhiteSpace(name))
+                            continue;
+
+                        var currentLayerName = RenderingLayerMask.RenderingLayerToName(i);
+                        if (!string.IsNullOrWhiteSpace(currentLayerName))
+                            currentLayerName += $" - {name}";
+                        else
+                            currentLayerName = name;
+                        RenderPipelineEditorUtility.TrySetRenderingLayerName(i, currentLayerName);
+                    }
+                }
+
+#pragma warning restore 618 // Type or member is obsolete
+                asset.m_AssetVersion = 7;
+            }
+
+            // Reload PSDImporter and AsepriteImporter assets for 2D. Importers are triggered before graphics settings are loaded
+            // This ensures affected assets dependent on default materials from graphics settings are loaded correctly
+            if (asset.m_AssetVersion < 8)
+            {
+                var distinctGuids = AssetDatabase.FindAssets("", new[] { "Assets" });
+
+                for (int i = 0; i < distinctGuids.Length; i++)
+                {
+                    var path = AssetDatabase.GUIDToAssetPath(distinctGuids[i]);
+                    var assetExt = Path.GetExtension(path);
+
+                    if (assetExt == ".psb" || assetExt == ".psd" ||
+                        assetExt == ".ase" || assetExt == ".aseprite")
+                        AssetDatabase.ImportAsset(path);
+                }
+
+                asset.m_AssetVersion = 8;
+            }
+
+            // If the asset version has changed, means that a migration step has been executed
+            if (assetVersionBeforeUpgrade != asset.m_AssetVersion)
+                EditorUtility.SetDirty(asset);
         }
 
-#endif
+        public static void MigrateToRenderPipelineGraphicsSettings(UniversalRenderPipelineGlobalSettings data)
+        {
+            MigrateToShaderStrippingSetting(data);
+            MigrateToURPShaderStrippingSetting(data);
+            MigrateDefaultVolumeProfile(data);
+            MigrateToRenderGraphSettings(data);
+        }
+
+        private static T GetOrCreateGraphicsSettings<T>(UniversalRenderPipelineGlobalSettings data)
+            where T : class, IRenderPipelineGraphicsSettings, new()
+        {
+            T settings;
+
+            if (data.TryGet(typeof(T), out var baseSettings))
+            {
+                settings = baseSettings as T;
+            }
+            else
+            {
+                settings = new T();
+                data.Add(settings);
+            }
+
+            return settings;
+        }
+
+        static void MigrateToShaderStrippingSetting(UniversalRenderPipelineGlobalSettings data)
+        {
+            var shaderStrippingSetting = GetOrCreateGraphicsSettings<ShaderStrippingSetting>(data);
+
+#pragma warning disable 618 // Type or member is obsolete
+            shaderStrippingSetting.shaderVariantLogLevel    = data.m_ShaderStrippingSetting.shaderVariantLogLevel;
+            shaderStrippingSetting.exportShaderVariants     = data.m_ShaderStrippingSetting.exportShaderVariants;
+            shaderStrippingSetting.stripRuntimeDebugShaders = data.m_ShaderStrippingSetting.stripRuntimeDebugShaders;
+#pragma warning restore 618
+        }
+
+        static void MigrateToRenderGraphSettings(UniversalRenderPipelineGlobalSettings data)
+        {
+            var rgSettings = GetOrCreateGraphicsSettings<RenderGraphSettings>(data);
+
+#pragma warning disable 618 // Type or member is obsolete
+            rgSettings.enableRenderCompatibilityMode = !data.m_EnableRenderGraph;
+#pragma warning restore 618
+        }
+
+        static void MigrateToURPShaderStrippingSetting(UniversalRenderPipelineGlobalSettings data)
+        {
+            var urpShaderStrippingSetting = GetOrCreateGraphicsSettings<URPShaderStrippingSetting>(data);
+
+#pragma warning disable 618 // Type or member is obsolete
+            urpShaderStrippingSetting.stripScreenCoordOverrideVariants  = data.m_URPShaderStrippingSetting.stripScreenCoordOverrideVariants;
+            urpShaderStrippingSetting.stripUnusedPostProcessingVariants = data.m_URPShaderStrippingSetting.stripUnusedPostProcessingVariants;
+            urpShaderStrippingSetting.stripUnusedVariants               = data.m_URPShaderStrippingSetting.stripUnusedVariants;
+#pragma warning restore 618
+        }
+
+        static void MigrateDefaultVolumeProfile(UniversalRenderPipelineGlobalSettings data)
+        {
+#pragma warning disable 618 // Type or member is obsolete
+            var defaultVolumeProfileSettings = GetOrCreateGraphicsSettings<URPDefaultVolumeProfileSettings>(data);
+            defaultVolumeProfileSettings.volumeProfile = data.m_ObsoleteDefaultVolumeProfile;
+            data.m_ObsoleteDefaultVolumeProfile = null; // Discard old reference after it is migrated
+#pragma warning restore 618 // Type or member is obsolete
+        }
+
+#endif // #if UNITY_EDITOR
+
         #endregion
 
-        private static UniversalRenderPipelineGlobalSettings cachedInstance = null;
-        /// <summary>
-        /// Active URP Global Settings asset. If the value is null then no UniversalRenderPipelineGlobalSettings has been registered to the Graphics Settings with the UniversalRenderPipeline.
-        /// </summary>
-        public static UniversalRenderPipelineGlobalSettings instance
-        {
-            get
-            {
-#if !UNITY_EDITOR
-                // The URP Global Settings could have been changed by script, undo/redo (case 1342987), or file update - file versioning, let us make sure we display the correct one
-                // In a Player, we do not need to worry about those changes as we only support loading one
-                if (cachedInstance == null)
-#endif
-                    cachedInstance = GraphicsSettings.GetSettingsForRenderPipeline<UniversalRenderPipeline>() as UniversalRenderPipelineGlobalSettings;
-                return cachedInstance;
-            }
-        }
-
-        static internal void UpdateGraphicsSettings(UniversalRenderPipelineGlobalSettings newSettings)
-        {
-            if (newSettings == cachedInstance)
-                return;
-            if (newSettings != null)
-                GraphicsSettings.RegisterRenderPipelineSettings<UniversalRenderPipeline>(newSettings as RenderPipelineGlobalSettings);
-            else
-                GraphicsSettings.UnregisterRenderPipelineSettings<UniversalRenderPipeline>();
-            cachedInstance = newSettings;
-        }
-
         /// <summary>Default name when creating an URP Global Settings asset.</summary>
-        public static readonly string defaultAssetName = "UniversalRenderPipelineGlobalSettings";
+        public const string defaultAssetName = "UniversalRenderPipelineGlobalSettings";
 
 #if UNITY_EDITOR
+        internal static string defaultPath => $"Assets/{defaultAssetName}.asset";
+
         //Making sure there is at least one UniversalRenderPipelineGlobalSettings instance in the project
-        internal static UniversalRenderPipelineGlobalSettings Ensure(string folderPath = "", bool canCreateNewAsset = true)
+        internal static UniversalRenderPipelineGlobalSettings Ensure(bool canCreateNewAsset = true)
         {
-            if (UniversalRenderPipelineGlobalSettings.instance)
-                return UniversalRenderPipelineGlobalSettings.instance;
+            UniversalRenderPipelineGlobalSettings currentInstance = GraphicsSettings.
+                GetSettingsForRenderPipeline<UniversalRenderPipeline>() as UniversalRenderPipelineGlobalSettings;
 
-            UniversalRenderPipelineGlobalSettings assetCreated = null;
-            string path = $"Assets/{folderPath}/{defaultAssetName}.asset";
-            assetCreated = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineGlobalSettings>(path);
-            if (assetCreated == null)
+            if (RenderPipelineGlobalSettingsUtils.TryEnsure<UniversalRenderPipelineGlobalSettings, UniversalRenderPipeline>(ref currentInstance, defaultPath, canCreateNewAsset))
             {
-                var guidGlobalSettingsAssets = AssetDatabase.FindAssets("t:UniversalRenderPipelineGlobalSettings");
-                //If we could not find the asset at the default path, find the first one
-                if (guidGlobalSettingsAssets.Length > 0)
+                if (currentInstance != null && !currentInstance.IsAtLastVersion())
                 {
-                    var curGUID = guidGlobalSettingsAssets[0];
-                    path = AssetDatabase.GUIDToAssetPath(curGUID);
-                    assetCreated = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineGlobalSettings>(path);
+                    UpgradeAsset(currentInstance.GetInstanceID());
+                    AssetDatabase.SaveAssetIfDirty(currentInstance);
                 }
-                else if (canCreateNewAsset)// or create one altogether
-                {
-                    if (!AssetDatabase.IsValidFolder("Assets/" + folderPath))
-                        AssetDatabase.CreateFolder("Assets", folderPath);
-                    assetCreated = Create(path);
 
-                    // TODO: Reenable after next urp template is published
-                    //Debug.LogWarning("No URP Global Settings Asset is assigned. One will be created for you. If you want to modify it, go to Project Settings > Graphics > URP Settings.");
-                }
-                else
-                {
-                    Debug.LogError("If you are building a Player, make sure to save an URP Global Settings asset by opening the project in the Editor first.");
-                    return null;
-                }
+                return currentInstance;
             }
-            Debug.Assert(assetCreated, "Could not create URP's Global Settings - URP may not work correctly - Open  Project Settings > Graphics > URP Settings for additional help.");
-            UpdateGraphicsSettings(assetCreated);
-            return UniversalRenderPipelineGlobalSettings.instance;
+
+            return null;
         }
 
-        internal static UniversalRenderPipelineGlobalSettings Create(string path, UniversalRenderPipelineGlobalSettings src = null)
+        public override void Initialize(RenderPipelineGlobalSettings source = null)
         {
-            UniversalRenderPipelineGlobalSettings assetCreated = null;
+            if (source is UniversalRenderPipelineGlobalSettings globalSettingsSource)
+                Array.Copy(globalSettingsSource.m_RenderingLayerNames, m_RenderingLayerNames, globalSettingsSource.m_RenderingLayerNames.Length);
 
-            // make sure the asset does not already exists
-            assetCreated = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineGlobalSettings>(path);
-            if (assetCreated == null)
+            // Note: RenderPipelineGraphicsSettings are not populated yet when the global settings asset is being
+            // initialized, so create the setting before using it
+            var defaultVolumeProfileSettings = GetOrCreateGraphicsSettings<URPDefaultVolumeProfileSettings>(this);
+            defaultVolumeProfileSettings.volumeProfile = GetOrCreateDefaultVolumeProfile(defaultVolumeProfileSettings.volumeProfile);
+        }
+
+#endif // #if UNITY_EDITOR
+
+        /// <inheritdoc/>
+        public override void Reset()
+        {
+            base.Reset();
+            DecalProjector.UpdateAllDecalProperties();
+        }
+
+        internal static VolumeProfile GetOrCreateDefaultVolumeProfile(VolumeProfile defaultVolumeProfile)
+        {
+#if UNITY_EDITOR
+            if (defaultVolumeProfile == null || defaultVolumeProfile.Equals(null))
             {
-                assetCreated = ScriptableObject.CreateInstance<UniversalRenderPipelineGlobalSettings>();
-                if (assetCreated != null)
-                {
-                    assetCreated.name = System.IO.Path.GetFileName(path);
-                }
-                AssetDatabase.CreateAsset(assetCreated, path);
-                Debug.Assert(assetCreated);
-            }
+                const string k_DefaultVolumeProfileName = "DefaultVolumeProfile";
+                const string k_DefaultVolumeProfilePath = "Assets/" + k_DefaultVolumeProfileName + ".asset";
 
-            if (assetCreated)
-            {
-                if (src != null)
-                {
-                    System.Array.Copy(src.m_RenderingLayerNames, assetCreated.m_RenderingLayerNames, src.m_RenderingLayerNames.Length);
-                }
+                defaultVolumeProfile = CreateInstance<VolumeProfile>();
+                Debug.Assert(defaultVolumeProfile);
 
-                AssetDatabase.SaveAssets();
+                defaultVolumeProfile.name = k_DefaultVolumeProfileName;
+                AssetDatabase.CreateAsset(defaultVolumeProfile, k_DefaultVolumeProfilePath);
+
+                AssetDatabase.SaveAssetIfDirty(defaultVolumeProfile);
                 AssetDatabase.Refresh();
+
+                if (VolumeManager.instance.isInitialized && RenderPipelineManager.currentPipeline is UniversalRenderPipeline)
+                    VolumeManager.instance.SetGlobalDefaultProfile(defaultVolumeProfile);
             }
-
-            return assetCreated;
-        }
-
 #endif
-
-        void Reset()
-        {
-            UpdateRenderingLayerNames();
+            return defaultVolumeProfile;
         }
+
+        [SerializeField, FormerlySerializedAs("m_DefaultVolumeProfile")]
+        [Obsolete("Kept For Migration. #from(2023.3)")]
+        internal VolumeProfile m_ObsoleteDefaultVolumeProfile;
 
         [SerializeField]
-        string[] m_RenderingLayerNames = new string[] { "Default" };
-        string[] renderingLayerNames
-        {
-            get
-            {
-                if (m_RenderingLayerNames == null)
-                    UpdateRenderingLayerNames();
-                return m_RenderingLayerNames;
-            }
-        }
-        [System.NonSerialized]
-        string[] m_PrefixedRenderingLayerNames;
-        string[] prefixedRenderingLayerNames
-        {
-            get
-            {
-                if (m_PrefixedRenderingLayerNames == null)
-                    UpdateRenderingLayerNames();
-                return m_PrefixedRenderingLayerNames;
-            }
-        }
-        /// <summary>Names used for display of rendering layer masks.</summary>
-        public string[] renderingLayerMaskNames => renderingLayerNames;
-        /// <summary>Names used for display of rendering layer masks with a prefix.</summary>
-        public string[] prefixedRenderingLayerMaskNames => prefixedRenderingLayerNames;
+        internal string[] m_RenderingLayerNames = new string[] { "Default" };
 
         [SerializeField]
         uint m_ValidRenderingLayers;
-        /// <summary>Valid rendering layers that can be used by graphics. </summary>
-        public uint validRenderingLayers => m_ValidRenderingLayers;
-
-        /// <summary>Regenerate Rendering Layer names and their prefixed versions.</summary>
-        internal void UpdateRenderingLayerNames()
-        {
-            // Update prefixed
-            if (m_PrefixedRenderingLayerNames == null)
-                m_PrefixedRenderingLayerNames = new string[32];
-            for (int i = 0; i < m_PrefixedRenderingLayerNames.Length; ++i)
-            {
-                uint renderingLayer = (uint)(1 << i);
-
-                m_ValidRenderingLayers = i < m_RenderingLayerNames.Length ? (m_ValidRenderingLayers | renderingLayer) : (m_ValidRenderingLayers & ~renderingLayer);
-                m_PrefixedRenderingLayerNames[i] = i < m_RenderingLayerNames.Length ? m_RenderingLayerNames[i] : $"Unused Layer {i}";
-            }
-
-            // Update decals
-            DecalProjector.UpdateAllDecalProperties();
-        }
 
         /// <summary>
         /// Names used for display of light layers with Layer's index as prefix.
         /// For example: "0: Light Layer Default"
         /// </summary>
-        [Obsolete("This is obsolete, please use prefixedRenderingLayerMaskNames instead.", false)]
+        [Obsolete("This is obsolete, please use prefixedRenderingLayerMaskNames instead.", true)]
         public string[] prefixedLightLayerNames => new string[0];
 
 
@@ -284,50 +357,23 @@ namespace UnityEngine.Rendering.Universal
 
         #endregion
 
-        #region Misc Settings
+#pragma warning disable 618
+#pragma warning disable 612
+        #region APV
+        // This is temporarily here until we have a core place to put it shared between pipelines.
+        [SerializeField]
+        internal ProbeVolumeSceneData apvScenesData;
 
-        [SerializeField] bool m_StripDebugVariants = true;
+        internal ProbeVolumeSceneData GetOrCreateAPVSceneData()
+        {
+            if (apvScenesData == null)
+                apvScenesData = new ProbeVolumeSceneData(this);
 
-        [SerializeField] bool m_StripUnusedPostProcessingVariants = false;
-
-        [SerializeField] bool m_StripUnusedVariants = true;
-
-        [SerializeField] bool m_StripUnusedLODCrossFadeVariants = true;
-
-        [SerializeField] bool m_StripScreenCoordOverrideVariants = true;
-
-        /// <summary>
-        /// Controls whether debug display shaders for Rendering Debugger are available in Player builds.
-        /// </summary>
-        [Obsolete("Please use stripRuntimeDebugShaders instead.", false)]
-        public bool supportRuntimeDebugDisplay = false;
-
-        /// <summary>
-        /// Controls whether debug display shaders for Rendering Debugger are available in Player builds.
-        /// </summary>
-        public bool stripDebugVariants { get => m_StripDebugVariants; set { m_StripDebugVariants = value; } }
-
-        /// <summary>
-        /// Controls whether strips automatically post processing shader variants based on <see cref="VolumeProfile"/> components.
-        /// It strips based on VolumeProfiles in project and not scenes that actually uses it.
-        /// </summary>
-        public bool stripUnusedPostProcessingVariants { get => m_StripUnusedPostProcessingVariants; set { m_StripUnusedPostProcessingVariants = value; } }
-
-        /// <summary>
-        /// Controls whether strip off variants if the feature is enabled.
-        /// </summary>
-        public bool stripUnusedVariants { get => m_StripUnusedVariants; set { m_StripUnusedVariants = value; } }
-
-        /// <summary>
-        /// If this property is true, Unity strips the LOD variants if the LOD cross-fade feature (UniversalRenderingPipelineAsset.enableLODCrossFade) is disabled.
-        /// </summary>
-        [Obsolete("No longer used as Shader Prefiltering automatically strips out unused LOD Crossfade variants. Please use the LOD Crossfade setting in the URP Asset to disable the feature if not used.", false)]
-        public bool stripUnusedLODCrossFadeVariants { get => m_StripUnusedLODCrossFadeVariants; set { m_StripUnusedLODCrossFadeVariants = value; } }
-
-        /// <summary>
-        /// Controls whether Screen Coordinates Override shader variants are automatically stripped.
-        /// </summary>
-        public bool stripScreenCoordOverrideVariants { get => m_StripScreenCoordOverrideVariants; set => m_StripScreenCoordOverrideVariants = value; }
+            apvScenesData.SetParentObject(this);
+            return apvScenesData;
+        }
+#pragma warning restore 612
+#pragma warning restore 618
 
         #endregion
     }

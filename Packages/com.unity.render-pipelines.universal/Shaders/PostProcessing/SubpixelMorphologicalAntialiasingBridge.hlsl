@@ -52,16 +52,11 @@ VaryingsEdge VertEdge(Attributes input)
     UNITY_SETUP_INSTANCE_ID(input);
     UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-#if SHADER_API_GLES
-    float4 pos = input.positionOS;
-    float2 uv  = input.uv;
-#else
     float4 pos = GetFullScreenTriangleVertexPosition(input.vertexID);
     float2 uv  = GetFullScreenTriangleTexCoord(input.vertexID);
-#endif
 
     output.positionCS = pos;
-    output.texcoord   = uv * _BlitScaleBias.xy + _BlitScaleBias.zw;
+    output.texcoord   = DYNAMIC_SCALING_APPLY_SCALEBIAS(uv);
 
     SMAAEdgeDetectionVS(output.texcoord, output.offsets);
     return output;
@@ -91,16 +86,11 @@ VaryingsBlend VertBlend(Attributes input)
     UNITY_SETUP_INSTANCE_ID(input);
     UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-#if SHADER_API_GLES
-    float4 pos = input.positionOS;
-    float2 uv  = input.uv;
-#else
     float4 pos = GetFullScreenTriangleVertexPosition(input.vertexID);
     float2 uv  = GetFullScreenTriangleTexCoord(input.vertexID);
-#endif
 
     output.positionCS = pos;
-    output.texcoord   = uv * _BlitScaleBias.xy + _BlitScaleBias.zw;
+    output.texcoord   = DYNAMIC_SCALING_APPLY_SCALEBIAS(uv);
 
     SMAABlendingWeightCalculationVS(output.texcoord, output.pixcoord, output.offsets);
     return output;
@@ -129,16 +119,11 @@ VaryingsNeighbor VertNeighbor(Attributes input)
     UNITY_SETUP_INSTANCE_ID(input);
     UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-#if SHADER_API_GLES
-    float4 pos = input.positionOS;
-    float2 uv  = input.uv;
-#else
     float4 pos = GetFullScreenTriangleVertexPosition(input.vertexID);
     float2 uv  = GetFullScreenTriangleTexCoord(input.vertexID);
-#endif
 
     output.positionCS = pos;
-    output.texcoord   = uv * _BlitScaleBias.xy + _BlitScaleBias.zw;
+    output.texcoord   = DYNAMIC_SCALING_APPLY_SCALEBIAS(uv);
 
     SMAANeighborhoodBlendingVS(output.texcoord, output.offset);
     return output;

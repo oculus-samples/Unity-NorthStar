@@ -68,7 +68,10 @@ namespace NorthStar
             if (m_trailParticle != null)
             {
                 var main = m_trailParticle.main;
-                main.customSimulationSpace = BoatController.Instance.transform;
+                if (BoatController.Instance)
+                {
+                    main.customSimulationSpace = BoatController.Instance.transform;
+                }
             }
             if (m_collider) m_collider.enabled = false;
         }
@@ -84,7 +87,7 @@ namespace NorthStar
 
                 m_lineRenderer.positionCount = m_points.Count;
                 m_lineRenderer.SetPositions(m_points.ToArray());
-                transform.forward = m_rigidbody.velocity.normalized;
+                transform.forward = m_rigidbody.linearVelocity.normalized;
 
                 // enable the collider after a certain time has passed
                 if (m_collider && !m_collider.enabled && m_colliderDelayTimeRemaining > 0)

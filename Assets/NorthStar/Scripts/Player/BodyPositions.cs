@@ -109,7 +109,7 @@ namespace NorthStar
             yield return null;
             m_body.enabled = true;
             yield return null;
-            FindObjectOfType<RetargetingAnimationConstraint>()?.RegenerateData();
+            FindFirstObjectByType<RetargetingAnimationConstraint>()?.RegenerateData();
         }
 
         private void OVRManager_HMDMounted()
@@ -247,7 +247,7 @@ namespace NorthStar
         private void FixHorizon()
         {
             var reorientStrength = GlobalSettings.PlayerSettings.ReorientStrength;
-            if (reorientStrength > 0)
+            if (reorientStrength > 0 && BoatController.Instance != null)
             {
                 var boatRotation = BoatController.Instance.MovementSource.CurrentRotation;
                 CameraRig.rotation = Quaternion.Slerp(Quaternion.identity, Quaternion.Inverse(boatRotation), GlobalSettings.PlayerSettings.ReorientStrength) * CameraRig.parent.localRotation;

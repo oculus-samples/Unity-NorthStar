@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEditor.Callbacks;
 using UnityEditor.Rendering.Analytics;
 using UnityEditor.Rendering.Universal.Analytics;
 using UnityEditor.Rendering.Universal.ShaderGUI;
@@ -15,9 +16,11 @@ namespace UnityEditor.Rendering.Universal
 {
     class MaterialModificationProcessor : AssetModificationProcessor
     {
+        const string k_MaterialExtension = ".mat";
+
         static void OnWillCreateAsset(string asset)
         {
-            if (!asset.ToLowerInvariant().EndsWith(".mat"))
+            if (!asset.HasExtension(k_MaterialExtension))
             {
                 return;
             }
@@ -61,12 +64,13 @@ namespace UnityEditor.Rendering.Universal
                     {
                         string commandLineOptions = Environment.CommandLine;
                         bool inTestSuite = commandLineOptions.Contains("-testResults");
-                        if (!inTestSuite && fileExist)
+                        bool isTemplate = EditorApplication.isCreateFromTemplate;
+                        if (!inTestSuite && fileExist && !isTemplate)
                         {
                             EditorUtility.DisplayDialog("URP Material upgrade", "The Materials in your Project were created using an older version of the Universal Render Pipeline (URP)." +
                                 " Unity must upgrade them to be compatible with your current version of URP. \n" +
                                 " Unity will re-import all of the Materials in your project, save the upgraded Materials to disk, and check them out in source control if needed.\n" +
-                                " Please see the Material upgrade guide in the URP documentation for more information.", "Ok");
+                                " Please see the Material upgrade guide in the URP documentation for more information.", "OK");
                         }
 
                         ReimportAllMaterials();
@@ -85,7 +89,7 @@ namespace UnityEditor.Rendering.Universal
         internal static List<string> s_ImportedAssetThatNeedSaving = new List<string>();
         internal static bool s_NeedsSavingAssets = false;
 
-        internal static readonly Action<Material, ShaderID>[] k_Upgraders = { UpgradeV1, UpgradeV2, UpgradeV3, UpgradeV4, UpgradeV5, UpgradeV6, UpgradeV7 };
+        internal static readonly Action<Material, ShaderID>[] k_Upgraders = { UpgradeV1, UpgradeV2, UpgradeV3, UpgradeV4, UpgradeV5, UpgradeV6, UpgradeV7, UpgradeV8, UpgradeV9, UpgradeV10 };
 
         static internal void SaveAssetsToDisk()
         {
@@ -113,6 +117,7 @@ namespace UnityEditor.Rendering.Universal
             s_NeedsSavingAssets = false;
         }
 
+        [RunAfterClass(typeof(UniversalRenderPipelineGlobalSettingsPostprocessor))]
         static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths)
         {
             string upgradeLog = "";
@@ -338,9 +343,26 @@ namespace UnityEditor.Rendering.Universal
                     var blendModePreserveSpecularPID = Shader.PropertyToID(Property.BlendModePreserveSpecular);
                     if (material.HasProperty(blendModePreserveSpecularPID))
                     {
+                        // TL;DR; As Complex Lit was not being versioned before we want to only upgrade it in certain
+                        // cases to not alter visuals
+                        //
+                        // To elaborate, this is needed for the following reasons:
+                        // 1) Premultiplied used to mean something different before V6
+                        // 2) If the update is applied twice it will change visuals
+                        // 3) As Complex Lit was missing form the ShaderID enum it was never being upgraded, so its
+                        //    version is not a reliable indicator of which version of Premultiplied alpha the user
+                        //    had intended (e.g. the URP Foundation test project is currently at V7 but some
+                        //    Complex Lit materials are at V3)
+                        // 5) To determine the intended version we can check which version the project is being upgraded
+                        //    from (as we can then know which version it was being actually used as). If the project is
+                        //    at version 6 or higher then we know that if the user had selected Premultiplied it is
+                        //    already working based on the new interpretation and should not be changed
+                        bool skipChangingBlendMode = shaderID == ShaderID.ComplexLit &&
+                                          UniversalProjectSettings.materialVersionForUpgrade >= 6;
+
                         var blendModePID = Shader.PropertyToID(Property.BlendMode);
                         var blendMode = (BaseShaderGUI.BlendMode)material.GetFloat(blendModePID);
-                        if (blendMode == BaseShaderGUI.BlendMode.Premultiply)
+                        if (blendMode == BaseShaderGUI.BlendMode.Premultiply && !skipChangingBlendMode)
                         {
                             material.SetFloat(blendModePID, (float)BaseShaderGUI.BlendMode.Alpha);
                             material.SetFloat(blendModePreserveSpecularPID, 1.0f);
@@ -372,6 +394,52 @@ namespace UnityEditor.Rendering.Universal
                 float alphaToMask = (isOpaque && isAlphaClipEnabled) ? 1.0f : 0.0f;
 
                 material.SetFloat(alphaToMaskPropertyID, alphaToMask);
+            }
+        }
+
+        // We need to disable the passes with a { "LightMode" = "MotionVectors" } tag for URP shaders that have them,
+        // otherwise they'll be rendered for static objects (transform not moving and no skeletal animation) regressing MV perf.
+        //
+        // This is now needed as most URP material types have their own dedicated MV pass (this is so they work with
+        // Alpha-Clipping which needs per material data and not just generic vertex data like for the override shader).
+        //
+        // In Unity (both Built-in and SRP), the MV pass will be used even if disabled on frames where the object's
+        // transform changes or there's skeletal animation. But for URP disabling wasn't necessary before as the single
+        // object MV override shader was only used when needed (and there wasn't even anything to disable per material)
+        //
+        // N.B. the SetShaderPassEnabled API takes a tag value corresponding to the "LightMode" key and not a pass name
+        static void UpgradeV8(Material material, ShaderID shaderID)
+        {
+            if (HasMotionVectorLightModeTag(shaderID))
+                material.SetShaderPassEnabled(MotionVectorRenderPass.k_MotionVectorsLightModeTag, false);
+        }
+
+        // We want to disable the custom motion vector pass for SpeedTrees which won't have any
+        // vertex animation due to no wind. This is done to prevent performance regression from
+        // rendering trees with no motion vector output.
+        static void UpgradeV9(Material material, ShaderID shaderID)
+        {
+            if(shaderID != ShaderID.SpeedTree8)
+                return;
+
+            // Check if the material is a SpeedTree material and whether it has wind turned on or off.
+            if(SpeedTree8MaterialUpgrader.DoesMaterialHaveSpeedTreeWindKeyword(material))
+            {
+                bool motionVectorPassEnabled = SpeedTree8MaterialUpgrader.IsWindEnabled(material);
+                material.SetShaderPassEnabled(MotionVectorRenderPass.k_MotionVectorsLightModeTag, motionVectorPassEnabled);
+            }
+        }
+
+        // Changed the emission-toggle evaluation. Need to make sure materials which enabled emission previously, still
+        // enable it after this fix.
+        static void UpgradeV10(Material material, ShaderID shaderID)
+        {
+            if ((material.globalIlluminationFlags & MaterialGlobalIlluminationFlags.EmissiveIsBlack) == 0)
+            {
+                material.globalIlluminationFlags |= MaterialGlobalIlluminationFlags.BakedEmissive;
+                if (material.HasProperty(Property.EmissionColor))
+                    MaterialEditor.FixupEmissiveFlag(material);
+                CoreUtils.SetKeyword(material, ShaderKeywordStrings._EMISSION, (material.globalIlluminationFlags & MaterialGlobalIlluminationFlags.AnyEmissive) != 0);
             }
         }
     }

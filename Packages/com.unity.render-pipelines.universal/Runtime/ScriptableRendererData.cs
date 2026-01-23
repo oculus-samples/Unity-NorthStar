@@ -14,33 +14,22 @@ namespace UnityEngine.Rendering.Universal
     /// Class <c>ScriptableRendererData</c> contains resources for a <c>ScriptableRenderer</c>.
     /// <seealso cref="ScriptableRenderer"/>
     /// </summary>
-    public abstract class ScriptableRendererData : ScriptableObject
+    [Icon("UnityEngine/Rendering/RenderPipelineAsset Icon")]
+    public abstract partial class ScriptableRendererData : ScriptableObject
     {
         internal bool isInvalidated { get; set; }
 
-        /// <summary>
-        /// Class contains references to shader resources used by Rendering Debugger.
-        /// </summary>
-        [Serializable, ReloadGroup]
-        public sealed class DebugShaderResources
+        internal virtual bool stripShadowsOffVariants
         {
-            /// <summary>
-            /// Debug shader used to output interpolated vertex attributes.
-            /// </summary>
-            [Reload("Shaders/Debug/DebugReplacement.shader")]
-            public Shader debugReplacementPS;
-
-            /// <summary>
-            /// Debug shader used to output HDR Chromacity mapping.
-            /// </summary>
-            [Reload("Shaders/Debug/HDRDebugView.shader")]
-            public Shader hdrDebugViewPS;
+            get => m_StripShadowsOffVariants;
+            set => m_StripShadowsOffVariants = value;
         }
 
-        /// <summary>
-        /// Container for shader resources used by Rendering Debugger.
-        /// </summary>
-        public DebugShaderResources debugShaders;
+        internal virtual bool stripAdditionalLightOffVariants
+        {
+            get => m_StripAdditionalLightOffVariants;
+            set => m_StripAdditionalLightOffVariants = value;
+        }
 
         /// <summary>
         /// Creates the instance of the ScriptableRenderer.
@@ -51,6 +40,10 @@ namespace UnityEngine.Rendering.Universal
         [SerializeField] internal List<ScriptableRendererFeature> m_RendererFeatures = new List<ScriptableRendererFeature>(10);
         [SerializeField] internal List<long> m_RendererFeatureMap = new List<long>(10);
         [SerializeField] bool m_UseNativeRenderPass = false;
+        [NonSerialized]
+        bool m_StripShadowsOffVariants = false;
+        [NonSerialized]
+        bool m_StripAdditionalLightOffVariants = false;
 
         /// <summary>
         /// List of additional render pass features for this renderer.
@@ -82,7 +75,9 @@ namespace UnityEngine.Rendering.Universal
         {
             SetDirty();
 #if UNITY_EDITOR
-            if (m_RendererFeatures.Contains(null))
+            // Only validate ScriptableRendererFeatures when all scripts have finished compiling (to avoid false-negatives
+            // when ScriptableRendererFeatures haven't been compiled before this check).
+            if (!EditorApplication.isCompiling && m_RendererFeatures.Contains(null))
                 ValidateRendererFeatures();
 #endif
         }
@@ -111,9 +106,10 @@ namespace UnityEngine.Rendering.Universal
         /// <summary>
         /// Returns true if contains renderer feature with specified type.
         /// </summary>
+        /// <param name="rendererFeature">RenderFeature output parameter.</param>
         /// <typeparam name="T">Renderer Feature type.</typeparam>
         /// <returns></returns>
-        internal bool TryGetRendererFeature<T>(out T rendererFeature) where T : ScriptableRendererFeature
+        public bool TryGetRendererFeature<T>(out T rendererFeature) where T : ScriptableRendererFeature
         {
             foreach (var target in rendererFeatures)
             {
@@ -150,7 +146,7 @@ namespace UnityEngine.Rendering.Universal
             // Collect valid, compiled sub-assets
             foreach (var asset in subassets)
             {
-                if (asset == null || asset.GetType().BaseType != typeof(ScriptableRendererFeature)) continue;
+                if (asset == null || !asset.GetType().IsSubclassOf(typeof(ScriptableRendererFeature))) continue;
                 AssetDatabase.TryGetGUIDAndLocalFileIdentifier(asset, out var guid, out long localId);
                 loadedAssets.Add(localId, asset);
                 debugOutput += $"-{asset.name}\n--localId={localId}\n";
@@ -200,8 +196,24 @@ namespace UnityEngine.Rendering.Universal
 
         internal bool DuplicateFeatureCheck(Type type)
         {
-            var isSingleFeature = type.GetCustomAttribute(typeof(DisallowMultipleRendererFeature));
-            return isSingleFeature != null && m_RendererFeatures.Select(renderFeature => renderFeature.GetType()).Any(t => t == type);
+            Attribute isSingleFeature = type.GetCustomAttribute(typeof(DisallowMultipleRendererFeature));
+            if (isSingleFeature == null)
+                return false;
+
+            if (m_RendererFeatures == null)
+                return false;
+
+            for (int i = 0; i < m_RendererFeatures.Count; i++)
+            {
+                ScriptableRendererFeature feature = m_RendererFeatures[i];
+                if (feature == null)
+                    continue;
+
+                if (feature.GetType() == type)
+                    return true;
+            }
+
+            return false;
         }
 
         private static object GetUnusedAsset(ref List<long> usedIds, ref Dictionary<long, object> assets)

@@ -94,7 +94,7 @@ namespace NorthStar
 
             // Apply adjustments to the shadow slice
             private static Plane[] s_planes = new Plane[6];
-            private void ShadowUtils_ShadowAdjustment(ref CameraData cameraData, ref ShadowSliceData sliceData, ref float shadowDistance)
+            private void ShadowUtils_ShadowAdjustment(ref UniversalCameraData cameraData, ref ShadowSliceData sliceData, ref float shadowDistance)
             {
                 // Don't do anything if marked disabled
                 if (!Enabled) return;

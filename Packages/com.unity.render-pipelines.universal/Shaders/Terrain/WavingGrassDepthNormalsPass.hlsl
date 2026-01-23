@@ -43,18 +43,39 @@ GrassVertexDepthNormalOutput DepthNormalOnlyVertex(GrassVertexDepthNormalInput v
     return o;
 }
 
+GrassVertexDepthNormalOutput DepthNormalOnlyBillboardVertex(GrassVertexDepthNormalInput v)
+{
+    GrassVertexDepthNormalOutput o = (GrassVertexDepthNormalOutput)0;
+    UNITY_SETUP_INSTANCE_ID(v);
+    UNITY_TRANSFER_INSTANCE_ID(v, o);
+    UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+
+    TerrainBillboardGrass (v.vertex, v.tangent.xy);
+
+    // wave amount defined by the grass height
+    float waveAmount = v.tangent.y;
+    o.color = TerrainWaveGrass(v.vertex, waveAmount, v.color);
+
+    VertexPositionInputs vertexInput = GetVertexPositionInputs(v.vertex.xyz);
+
+    o.uv = v.texcoord;
+    o.normal = TransformObjectToWorldNormal(v.normal);
+    o.clipPos = vertexInput.positionCS;
+    o.viewDirWS = GetCameraPositionWS() - vertexInput.positionWS;
+    return o;
+}
+
 half4 DepthNormalOnlyFragment(GrassVertexDepthNormalOutput input) : SV_TARGET
 {
     Alpha(SampleAlbedoAlpha(input.uv, TEXTURE2D_ARGS(_MainTex, sampler_MainTex)).a, input.color, _Cutoff);
     #if defined(_GBUFFER_NORMALS_OCT)
-        float3 normalWS = normalize(input.normal);
+        float3 normalWS = NormalizeNormalPerPixel(input.normal);
         float2 octNormalWS = PackNormalOctQuadEncode(normalWS);           // values between [-1, +1], must use fp32 on Nintendo Switch.
         float2 remappedOctNormalWS = saturate(octNormalWS * 0.5 + 0.5);   // values between [ 0,  1]
         half3 packedNormalWS = PackFloat2To888(remappedOctNormalWS);      // values between [ 0,  1]
         return half4(packedNormalWS, 0.0);
     #else
-        half3 normalWS = half3(normalize(cross(ddy(input.viewDirWS), ddx(input.viewDirWS))));
-        return half4(normalWS, 0.0);
+        return half4(NormalizeNormalPerPixel(input.normal), 0.0);
     #endif
 }
 

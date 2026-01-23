@@ -1,3 +1,5 @@
+using UnityEngine.Experimental.Rendering;
+
 namespace UnityEngine.Rendering.Universal
 {
     /// <summary>
@@ -43,9 +45,11 @@ namespace UnityEngine.Rendering.Universal
             if (++index >= blueNoise.Length)
                 index = 0;
 
+            var oldState = Random.state;
             Random.InitState(Time.frameCount);
             float rndOffsetX = Random.value;
             float rndOffsetY = Random.value;
+            Random.state = oldState;
 #endif
 
             // Ideally we would be sending a texture array once and an index to the slice to use
@@ -92,33 +96,40 @@ namespace UnityEngine.Rendering.Universal
                 texture = data.textures.filmGrainTex[(int)settings.type.value];
 
 #if LWRP_DEBUG_STATIC_POSTFX
-            float offsetX = 0f;
-            float offsetY = 0f;
+            float rndOffsetX = 0f;
+            float rndOffsetY = 0f;
 #else
+            var oldState = Random.state;
             Random.InitState(Time.frameCount);
-            float offsetX = Random.value;
-            float offsetY = Random.value;
+            float rndOffsetX = Random.value;
+            float rndOffsetY = Random.value;
+            Random.state = oldState;
 #endif
 
             var tilingParams = texture == null
                 ? Vector4.zero
-                : new Vector4(cameraPixelWidth / (float)texture.width, cameraPixelHeight / (float)texture.height, offsetX, offsetY);
+                : new Vector4(cameraPixelWidth / (float)texture.width, cameraPixelHeight / (float)texture.height, rndOffsetX, rndOffsetY);
 
             material.SetTexture(ShaderConstants._Grain_Texture, texture);
             material.SetVector(ShaderConstants._Grain_Params, new Vector2(settings.intensity.value * 4f, settings.response.value));
             material.SetVector(ShaderConstants._Grain_TilingParams, tilingParams);
         }
 
-        internal static void SetSourceSize(CommandBuffer cmd, RenderTextureDescriptor desc)
+        internal static void SetSourceSize(RasterCommandBuffer cmd, RTHandle source)
         {
-            float width = desc.width;
-            float height = desc.height;
-            if (desc.useDynamicScale)
+            float width = source.rt.width;
+            float height = source.rt.height;
+            if (source.rt.useDynamicScale)
             {
                 width *= ScalableBufferManager.widthScaleFactor;
                 height *= ScalableBufferManager.heightScaleFactor;
             }
             cmd.SetGlobalVector(ShaderConstants._SourceSize, new Vector4(width, height, 1.0f / width, 1.0f / height));
+        }
+
+        internal static void SetSourceSize(CommandBuffer cmd, RTHandle source)
+        {
+            SetSourceSize(CommandBufferHelpers.GetRasterCommandBuffer(cmd), source);
         }
 
         // Precomputed shader ids to same some CPU cycles (mostly affects mobile)

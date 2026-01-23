@@ -1,7 +1,11 @@
+#include "Packages/com.unity.render-pipelines.universal/Shaders/2D/Include/Core2D.hlsl"
+
 PackedVaryings vert(Attributes input)
 {
     Varyings output = (Varyings)0;
+    input.positionOS = UnityFlipSprite(input.positionOS, unity_SpriteProps.xy);
     output = BuildVaryings(input);
+    output.color *= unity_SpriteColor;
     output.normalWS = -GetViewForwardDir();
     PackedVaryings packedOutput = PackVaryings(output);
     return packedOutput;

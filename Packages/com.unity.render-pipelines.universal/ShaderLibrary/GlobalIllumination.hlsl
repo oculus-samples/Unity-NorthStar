@@ -6,6 +6,12 @@
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ImageBasedLighting.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/RealtimeLights.hlsl"
 
+#define AMBIENT_PROBE_BUFFER 0
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/AmbientProbe.hlsl"
+
+#if defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2)
+#include "Packages/com.unity.render-pipelines.core/Runtime/Lighting/ProbeVolume/ProbeVolume.hlsl"
+#endif
 #if USE_FORWARD_PLUS
 #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
 #endif
@@ -17,29 +23,13 @@
     #define _MIXED_LIGHTING_SUBTRACTIVE
 #endif
 
-// Samples SH L0, L1 and L2 terms
-half3 SampleSH(half3 normalWS)
-{
-    // LPPV is not supported in Ligthweight Pipeline
-    real4 SHCoefficients[7];
-    SHCoefficients[0] = unity_SHAr;
-    SHCoefficients[1] = unity_SHAg;
-    SHCoefficients[2] = unity_SHAb;
-    SHCoefficients[3] = unity_SHBr;
-    SHCoefficients[4] = unity_SHBg;
-    SHCoefficients[5] = unity_SHBb;
-    SHCoefficients[6] = unity_SHC;
-
-    return max(half3(0, 0, 0), SampleSH9(SHCoefficients, normalWS));
-}
-
 // SH Vertex Evaluation. Depending on target SH sampling might be
 // done completely per vertex or mixed with L2 term per vertex and L0, L1
 // per pixel. See SampleSHPixel
 half3 SampleSHVertex(half3 normalWS)
 {
 #if defined(EVALUATE_SH_VERTEX)
-    return SampleSH(normalWS);
+    return EvaluateAmbientProbeSRGB(normalWS);
 #elif defined(EVALUATE_SH_MIXED)
     // no max since this is only L2 contribution
     return SHEvalLinearL2(normalWS, unity_SHBr, unity_SHBg, unity_SHBb, unity_SHC);
@@ -64,15 +54,100 @@ half3 SampleSHPixel(half3 L2Term, half3 normalWS)
 #endif
 
     // Default: Evaluate SH fully per-pixel
-    return SampleSH(normalWS);
+    return EvaluateAmbientProbeSRGB(normalWS);
 }
 
-#if defined(UNITY_DOTS_INSTANCING_ENABLED)
+// APV Prove volume
+// Vertex and Mixed both use Vertex sampling
+
+#if (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+half3 SampleProbeVolumeVertex(in float3 absolutePositionWS, in float3 normalWS, in float3 viewDir, out float4 probeOcclusion)
+{
+    probeOcclusion = 1.0;
+
+#if defined(EVALUATE_SH_VERTEX) || defined(EVALUATE_SH_MIXED)
+    half3 bakedGI;
+    // The screen space position is used for noise, which is irrelevant when doing vertex sampling
+    float2 positionSS = float2(0, 0);
+    if (_EnableProbeVolumes)
+    {
+        EvaluateAdaptiveProbeVolume(absolutePositionWS, normalWS, viewDir, positionSS, GetMeshRenderingLayer(), bakedGI, probeOcclusion);
+    }
+    else
+    {
+        bakedGI = EvaluateAmbientProbe(normalWS);
+    }
+#ifdef UNITY_COLORSPACE_GAMMA
+    bakedGI = LinearToSRGB(bakedGI);
+#endif
+    return bakedGI;
+#else
+    return half3(0, 0, 0);
+#endif
+}
+
+half3 SampleProbeVolumePixel(in half3 vertexValue, in float3 absolutePositionWS, in float3 normalWS, in float3 viewDir, in float2 positionSS, in float4 vertexProbeOcclusion, out float4 probeOcclusion)
+{
+    probeOcclusion = 1.0;
+
+#if defined(EVALUATE_SH_VERTEX) || defined(EVALUATE_SH_MIXED)
+    probeOcclusion = vertexProbeOcclusion;
+    return vertexValue;
+#elif defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2)
+    half3 bakedGI;
+    if (_EnableProbeVolumes)
+    {
+        EvaluateAdaptiveProbeVolume(absolutePositionWS, normalWS, viewDir, positionSS, GetMeshRenderingLayer(), bakedGI, probeOcclusion);
+    }
+    else
+    {
+        bakedGI = EvaluateAmbientProbe(normalWS);
+    }
+#ifdef UNITY_COLORSPACE_GAMMA
+        bakedGI = LinearToSRGB(bakedGI);
+#endif
+    return bakedGI;
+#else
+    return half3(0, 0, 0);
+#endif
+}
+
+half3 SampleProbeVolumePixel(in half3 vertexValue, in float3 absolutePositionWS, in float3 normalWS, in float3 viewDir, in float2 positionSS)
+{
+    float4 unusedProbeOcclusion = 0;
+    return SampleProbeVolumePixel(vertexValue, absolutePositionWS, normalWS, viewDir, positionSS, unusedProbeOcclusion, unusedProbeOcclusion);
+}
+#endif
+
+half3 SampleProbeSHVertex(in float3 absolutePositionWS, in float3 normalWS, in float3 viewDir, out float4 probeOcclusion)
+{
+    probeOcclusion = 1.0;
+
+#if (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    return SampleProbeVolumeVertex(absolutePositionWS, normalWS, viewDir, probeOcclusion);
+#else
+    return SampleSHVertex(normalWS);
+#endif
+}
+
+half3 SampleProbeSHVertex(in float3 absolutePositionWS, in float3 normalWS, in float3 viewDir)
+{
+    float4 unusedProbeOcclusion = 0;
+    return SampleProbeSHVertex(absolutePositionWS, normalWS, viewDir, unusedProbeOcclusion);
+}
+
+#if defined(UNITY_DOTS_INSTANCING_ENABLED) && !defined(USE_LEGACY_LIGHTMAPS)
+// ^ GPU-driven rendering is enabled, and we haven't opted-out from lightmap
+// texture arrays. This minimizes batch breakages, but texture arrays aren't
+// supported in a performant way on all GPUs.
 #define LIGHTMAP_NAME unity_Lightmaps
 #define LIGHTMAP_INDIRECTION_NAME unity_LightmapsInd
 #define LIGHTMAP_SAMPLER_NAME samplerunity_Lightmaps
 #define LIGHTMAP_SAMPLE_EXTRA_ARGS staticLightmapUV, unity_LightmapIndex.x
 #else
+// ^ Lightmaps are not bound as texture arrays, but as individual textures. The
+// batch is broken every time lightmaps are changed, but this is well-supported
+// on all GPUs.
 #define LIGHTMAP_NAME unity_Lightmap
 #define LIGHTMAP_INDIRECTION_NAME unity_LightmapInd
 #define LIGHTMAP_SAMPLER_NAME samplerunity_Lightmap
@@ -82,14 +157,6 @@ half3 SampleSHPixel(half3 L2Term, half3 normalWS)
 // Sample baked and/or realtime lightmap. Non-Direction and Directional if available.
 half3 SampleLightmap(float2 staticLightmapUV, float2 dynamicLightmapUV, half3 normalWS)
 {
-#ifdef UNITY_LIGHTMAP_FULL_HDR
-    bool encodedLightmap = false;
-#else
-    bool encodedLightmap = true;
-#endif
-
-    half4 decodeInstructions = half4(LIGHTMAP_HDR_MULTIPLIER, LIGHTMAP_HDR_EXPONENT, 0.0h, 0.0h);
-
     // The shader library sample lightmap functions transform the lightmap uv coords to apply bias and scale.
     // However, universal pipeline already transformed those coords in vertex. We pass half4(1, 1, 0, 0) and
     // the compiler will optimize the transform away.
@@ -100,18 +167,18 @@ half3 SampleLightmap(float2 staticLightmapUV, float2 dynamicLightmapUV, half3 no
 #if defined(LIGHTMAP_ON) && defined(DIRLIGHTMAP_COMBINED)
     diffuseLighting = SampleDirectionalLightmap(TEXTURE2D_LIGHTMAP_ARGS(LIGHTMAP_NAME, LIGHTMAP_SAMPLER_NAME),
         TEXTURE2D_LIGHTMAP_ARGS(LIGHTMAP_INDIRECTION_NAME, LIGHTMAP_SAMPLER_NAME),
-        LIGHTMAP_SAMPLE_EXTRA_ARGS, transformCoords, normalWS, encodedLightmap, decodeInstructions);
+        LIGHTMAP_SAMPLE_EXTRA_ARGS, transformCoords, normalWS, true);
 #elif defined(LIGHTMAP_ON)
-    diffuseLighting = SampleSingleLightmap(TEXTURE2D_LIGHTMAP_ARGS(LIGHTMAP_NAME, LIGHTMAP_SAMPLER_NAME), LIGHTMAP_SAMPLE_EXTRA_ARGS, transformCoords, encodedLightmap, decodeInstructions);
+    diffuseLighting = SampleSingleLightmap(TEXTURE2D_LIGHTMAP_ARGS(LIGHTMAP_NAME, LIGHTMAP_SAMPLER_NAME), LIGHTMAP_SAMPLE_EXTRA_ARGS, transformCoords, true);
 #endif
 
 #if defined(DYNAMICLIGHTMAP_ON) && defined(DIRLIGHTMAP_COMBINED)
     diffuseLighting += SampleDirectionalLightmap(TEXTURE2D_ARGS(unity_DynamicLightmap, samplerunity_DynamicLightmap),
         TEXTURE2D_ARGS(unity_DynamicDirectionality, samplerunity_DynamicLightmap),
-        dynamicLightmapUV, transformCoords, normalWS, false, decodeInstructions);
+         dynamicLightmapUV, transformCoords, normalWS, false);
 #elif defined(DYNAMICLIGHTMAP_ON)
     diffuseLighting += SampleSingleLightmap(TEXTURE2D_ARGS(unity_DynamicLightmap, samplerunity_DynamicLightmap),
-        dynamicLightmapUV, transformCoords, false, decodeInstructions);
+         dynamicLightmapUV, transformCoords, false);
 #endif
 
     return diffuseLighting;
@@ -134,29 +201,37 @@ half3 SampleLightmap(float2 staticLightmapUV, half3 normalWS)
 #define SAMPLE_GI(staticLmName, dynamicLmName, shName, normalWSName) SampleLightmap(0, dynamicLmName, normalWSName)
 #elif defined(LIGHTMAP_ON)
 #define SAMPLE_GI(staticLmName, shName, normalWSName) SampleLightmap(staticLmName, 0, normalWSName)
+#elif defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2)
+#ifdef USE_APV_PROBE_OCCLUSION
+    #define SAMPLE_GI(shName, absolutePositionWS, normalWS, viewDir, positionSS, vertexProbeOcclusion, probeOcclusion) SampleProbeVolumePixel(shName, absolutePositionWS, normalWS, viewDir, positionSS, vertexProbeOcclusion, probeOcclusion)
+#else
+    #define SAMPLE_GI(shName, absolutePositionWS, normalWS, viewDir, positionSS, vertexProbeOcclusion, probeOcclusion) SampleProbeVolumePixel(shName, absolutePositionWS, normalWS, viewDir, positionSS)
+#endif
 #else
 #define SAMPLE_GI(staticLmName, shName, normalWSName) SampleSHPixel(shName, normalWSName)
 #endif
 
-// Meta change : Rotate box projected reflection probes by this matrix
+// META CHANGE START: Rotate box projected reflection probes by this matrix for VR
 half4x4 _ProbeReorientation;
+// META CHANGE END
 
 half3 BoxProjectedCubemapDirection(half3 reflectionWS, float3 positionWS, float4 cubemapPositionWS, float4 boxMin, float4 boxMax)
 {
     // Is this probe using box projection?
+    // META CHANGE START: Added branch hint and probe reorientation for VR reflection probes
     [branch]
     if (cubemapPositionWS.w > 0.0f)
     {
         // Apply rotation to direction vector
         reflectionWS = mul((half3x3)_ProbeReorientation, reflectionWS);
-        
+
         float3 boxMinMax = (reflectionWS > 0.0h) ? boxMax.xyz : boxMin.xyz;
-        
+
         // Make everything box-relative
         positionWS -= cubemapPositionWS.xyz;
         boxMinMax -= cubemapPositionWS.xyz;
         half3 positionWSH = mul((half3x3)_ProbeReorientation, (half3)positionWS);
-        
+
         // Ray box intersection
         half3 rbMinMax = ((half3)boxMinMax - positionWSH) / reflectionWS;
         half fa = half(min(min(rbMinMax.x, rbMinMax.y), rbMinMax.z));
@@ -164,6 +239,7 @@ half3 BoxProjectedCubemapDirection(half3 reflectionWS, float3 positionWS, float4
         half3 result = positionWSH + reflectionWS * fa;
         return result;
     }
+    // META CHANGE END
     else
     {
         return reflectionWS;
@@ -187,7 +263,9 @@ half3 CalculateIrradianceFromReflectionProbes(half3 reflectVector, float3 positi
 {
     half3 irradiance = half3(0.0h, 0.0h, 0.0h);
     half mip = PerceptualRoughnessToMipmapLevel(perceptualRoughness);
+// META CHANGE START: Added _REFLECTION_PROBE_ATLAS check for VR performance - skip atlas code when not used
 #if USE_FORWARD_PLUS && defined(_REFLECTION_PROBE_ATLAS)
+// META CHANGE END
     float totalWeight = 0.0f;
     uint probeIndex;
     ClusterIterator it = ClusterInit(normalizedScreenSpaceUV, positionWS, 1);
@@ -213,8 +291,8 @@ half3 CalculateIrradianceFromReflectionProbes(half3 reflectVector, float3 positi
         float4 scaleOffset0 = urp_ReflProbes_MipScaleOffset[probeIndex * 7 + (uint)mip0];
         float4 scaleOffset1 = urp_ReflProbes_MipScaleOffset[probeIndex * 7 + (uint)mip1];
 
-        half3 irradiance0 = half4(SAMPLE_TEXTURE2D_LOD(urp_ReflProbes_Atlas, samplerurp_ReflProbes_Atlas, uv * scaleOffset0.xy + scaleOffset0.zw, 0.0)).rgb;
-        half3 irradiance1 = half4(SAMPLE_TEXTURE2D_LOD(urp_ReflProbes_Atlas, samplerurp_ReflProbes_Atlas, uv * scaleOffset1.xy + scaleOffset1.zw, 0.0)).rgb;
+        half3 irradiance0 = half4(SAMPLE_TEXTURE2D_LOD(urp_ReflProbes_Atlas, sampler_LinearClamp, uv * scaleOffset0.xy + scaleOffset0.zw, 0.0)).rgb;
+        half3 irradiance1 = half4(SAMPLE_TEXTURE2D_LOD(urp_ReflProbes_Atlas, sampler_LinearClamp, uv * scaleOffset1.xy + scaleOffset1.zw, 0.0)).rgb;
         irradiance += weight * lerp(irradiance0, irradiance1, mipBlend);
         totalWeight += weight;
     }
@@ -280,13 +358,6 @@ half3 CalculateIrradianceFromReflectionProbes(half3 reflectVector, float3 positi
 
     return irradiance;
 }
-
-#if !USE_FORWARD_PLUS
-half3 CalculateIrradianceFromReflectionProbes(half3 reflectVector, float3 positionWS, half perceptualRoughness)
-{
-    return CalculateIrradianceFromReflectionProbes(reflectVector, positionWS, perceptualRoughness, float2(0.0f, 0.0f));
-}
-#endif
 
 half3 GlossyEnvironmentReflection(half3 reflectVector, float3 positionWS, half perceptualRoughness, half occlusion, float2 normalizedScreenSpaceUV)
 {
@@ -372,6 +443,7 @@ half3 GlobalIllumination(BRDFData brdfData, BRDFData brdfDataClearCoat, float cl
     half3 indirectDiffuse = bakedGI;
     half3 indirectSpecular = GlossyEnvironmentReflection(reflectVector, positionWS, brdfData.perceptualRoughness, 1.0h, normalizedScreenSpaceUV);
 
+    // META CHANGE: Added NoV parameter to EnvironmentBRDF for improved BRDF approximation
     half3 color = EnvironmentBRDF(brdfData, indirectDiffuse, indirectSpecular, fresnelTerm, NoV);
 
     if (IsOnlyAOLightingFeatureEnabled())
@@ -382,6 +454,7 @@ half3 GlobalIllumination(BRDFData brdfData, BRDFData brdfDataClearCoat, float cl
 #if defined(_CLEARCOAT) || defined(_CLEARCOATMAP)
     half3 coatIndirectSpecular = GlossyEnvironmentReflection(reflectVector, positionWS, brdfDataClearCoat.perceptualRoughness, 1.0h, normalizedScreenSpaceUV);
     // TODO: "grazing term" causes problems on full roughness
+    // META CHANGE: Added NoV parameter to EnvironmentBRDFClearCoat
     half3 coatColor = EnvironmentBRDFClearCoat(brdfDataClearCoat, clearCoatMask, coatIndirectSpecular, fresnelTerm, NoV);
 
     // Blend with base layer using khronos glTF recommended way using NoV
@@ -421,11 +494,13 @@ half3 GlobalIllumination(BRDFData brdfData, BRDFData brdfDataClearCoat, float cl
     half3 indirectDiffuse = bakedGI;
     half3 indirectSpecular = GlossyEnvironmentReflection(reflectVector, brdfData.perceptualRoughness, half(1.0));
 
+    // META CHANGE: Added NoV parameter to EnvironmentBRDF for improved BRDF approximation
     half3 color = EnvironmentBRDF(brdfData, indirectDiffuse, indirectSpecular, fresnelTerm, NoV);
 
 #if defined(_CLEARCOAT) || defined(_CLEARCOATMAP)
     half3 coatIndirectSpecular = GlossyEnvironmentReflection(reflectVector, brdfDataClearCoat.perceptualRoughness, half(1.0));
     // TODO: "grazing term" causes problems on full roughness
+    // META CHANGE: Added NoV parameter to EnvironmentBRDFClearCoat
     half3 coatColor = EnvironmentBRDFClearCoat(brdfDataClearCoat, clearCoatMask, coatIndirectSpecular, fresnelTerm, NoV);
 
     // Blend with base layer using khronos glTF recommended way using NoV

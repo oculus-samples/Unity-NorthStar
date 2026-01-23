@@ -13,7 +13,7 @@ float4x4 _NormalReconstructionMatrix[2];
 
 float GetRawDepth(float2 uv)
 {
-    return SampleSceneDepth(uv.xy).r;
+    return SampleSceneDepth(uv.xy, sampler_PointClamp).r;
 }
 
 // inspired by keijiro's depth inverse projection
@@ -38,7 +38,7 @@ half3 ReconstructNormalDerivative(float2 positionSS)
     float3 viewSpacePos = ViewSpacePosAtPixelPosition(positionSS);
     float3 hDeriv = ddy(viewSpacePos);
     float3 vDeriv = ddx(viewSpacePos);
-    return half3(normalize(cross(hDeriv, vDeriv)));
+    return half3(SafeNormalize(cross(hDeriv, vDeriv)));
 }
 
 // Taken from https://gist.github.com/bgolus/a07ed65602c009d5e2f753826e8078a0

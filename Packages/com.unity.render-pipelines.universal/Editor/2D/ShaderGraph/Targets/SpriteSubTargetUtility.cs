@@ -2,16 +2,33 @@ using System;
 using System.Linq;
 using UnityEditor.ShaderGraph;
 using UnityEngine.UIElements;
+using static UnityEditor.Rendering.Universal.ShaderGraph.UniversalTarget;
 
 namespace UnityEditor.Rendering.Universal.ShaderGraph
 {
     internal static class SpriteSubTargetUtility
     {
+        public static RenderStateCollection GetDefaultRenderState(UniversalTarget target)
+        {
+            var result = CoreRenderStates.Default;
+
+            // Add Z write
+            if (target.zWriteControl == ZWriteControl.ForceEnabled)
+                result.Add(RenderState.ZWrite(ZWrite.On));
+            else
+                result.Add(RenderState.ZWrite(ZWrite.Off), new FieldCondition(UniversalFields.SurfaceTransparent, true));
+
+            // Add Z test
+            result.Add(RenderState.ZTest(target.zTestMode.ToString()));
+
+            return result;
+        }
+
         public static void AddDefaultFields(ref TargetFieldContext context, UniversalTarget target)
         {
             // Only support SpriteColor legacy block if BaseColor/Alpha are not active
             var descs = context.blocks.Select(x => x.descriptor);
-            bool useLegacyBlocks = !descs.Contains(BlockFields.SurfaceDescription.BaseColor) && !descs.Contains(BlockFields.SurfaceDescription.Alpha);
+            bool useLegacyBlocks = descs.Contains(BlockFields.SurfaceDescriptionLegacy.SpriteColor);
             context.AddField(CoreFields.UseLegacySpriteBlocks, useLegacyBlocks);
 
             // Surface Type
@@ -39,7 +56,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         public static void GetDefaultActiveBlocks(ref TargetActiveBlockContext context, UniversalTarget target)
         {
             // Only support SpriteColor legacy block if BaseColor/Alpha are not active
-            bool useLegacyBlocks = !context.currentBlocks.Contains(BlockFields.SurfaceDescription.BaseColor) && !context.currentBlocks.Contains(BlockFields.SurfaceDescription.Alpha);
+            bool useLegacyBlocks = context.currentBlocks.Contains(BlockFields.SurfaceDescriptionLegacy.SpriteColor);
             context.AddBlock(BlockFields.SurfaceDescriptionLegacy.SpriteColor, useLegacyBlocks);
 
             context.AddBlock(BlockFields.SurfaceDescription.Alpha);
@@ -58,6 +75,29 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 onChange();
             });
 
+            context.AddProperty("Depth Write", new EnumField(ZWriteControl.ForceDisabled) { value = target.zWriteControl }, (evt) =>
+            {
+                if (Equals(target.zWriteControl, evt.newValue))
+                    return;
+
+                registerUndo("Change Depth Write Control");
+                target.zWriteControl = (ZWriteControl)evt.newValue;
+                onChange();
+            });
+
+            if (target.zWriteControl == ZWriteControl.ForceEnabled)
+            {
+                context.AddProperty("Depth Test", new EnumField(ZTestModeForUI.LEqual) { value = (ZTestModeForUI)target.zTestMode }, (evt) =>
+                {
+                    if (Equals(target.zTestMode, evt.newValue))
+                        return;
+
+                    registerUndo("Change Depth Test");
+                    target.zTestMode = (ZTestMode)evt.newValue;
+                    onChange();
+                });
+            }
+
             context.AddProperty("Alpha Clipping", new Toggle() { value = target.alphaClip }, (evt) =>
             {
                 if (Equals(target.alphaClip, evt.newValue))
@@ -65,6 +105,16 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 
                 registerUndo("Change Alpha Clip");
                 target.alphaClip = evt.newValue;
+                onChange();
+            });
+
+            context.AddProperty("Disable Color Tint", new Toggle() { value = target.disableTint }, (evt) =>
+            {
+                if (Equals(target.disableTint, evt.newValue))
+                    return;
+
+                registerUndo("Change Disable Tint");
+                target.disableTint = evt.newValue;
                 onChange();
             });
         }

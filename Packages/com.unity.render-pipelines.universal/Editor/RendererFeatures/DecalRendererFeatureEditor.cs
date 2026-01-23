@@ -45,7 +45,7 @@ namespace UnityEditor.Rendering.Universal
         {
             Init();
 
-            ValidateGraphicsApis();
+            var isGLDevice = SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3 || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLCore;
 
             EditorGUILayout.PropertyField(m_Technique, Styles.Technique);
 
@@ -53,6 +53,12 @@ namespace UnityEditor.Rendering.Universal
 
             if (technique == DecalTechniqueOption.DBuffer)
             {
+                if (isGLDevice)
+                {
+                    EditorGUILayout.HelpBox("DBuffer technique is not supported on OpenGL. Decals will not be rendered.", MessageType.Error);
+                    EditorGUILayout.Space();
+                }
+
                 EditorGUI.indentLevel++;
                 EditorGUILayout.PropertyField(m_DBufferSurfaceData, Styles.SurfaceData);
                 EditorGUI.indentLevel--;
@@ -66,17 +72,24 @@ namespace UnityEditor.Rendering.Universal
             }
 
             EditorGUILayout.PropertyField(m_MaxDrawDistance, Styles.MaxDrawDistance);
-            EditorGUILayout.PropertyField(m_DecalLayers, Styles.UseRenderingLayers);
-        }
 
-        private void ValidateGraphicsApis()
-        {
-            BuildTarget platform = EditorUserBuildSettings.activeBuildTarget;
-            GraphicsDeviceType[] graphicsAPIs = PlayerSettings.GetGraphicsAPIs(platform);
-
-            if (System.Array.FindIndex(graphicsAPIs, element => element == GraphicsDeviceType.OpenGLES2) >= 0)
+            if (isGLDevice)
             {
-                EditorGUILayout.HelpBox("Decals are not supported with OpenGLES2.", MessageType.Warning);
+                if (m_DecalLayers.boolValue)
+                {
+                    m_DecalLayers.boolValue = false;
+                    serializedObject.ApplyModifiedProperties();
+                }
+
+                GUI.enabled = false;
+            }
+
+            EditorGUILayout.PropertyField(m_DecalLayers, Styles.UseRenderingLayers);
+
+            if (isGLDevice)
+            {
+                GUI.enabled = true;
+                EditorGUILayout.HelpBox("Rendering Layers are not supported on OpenGL.", MessageType.Warning);
             }
         }
     }

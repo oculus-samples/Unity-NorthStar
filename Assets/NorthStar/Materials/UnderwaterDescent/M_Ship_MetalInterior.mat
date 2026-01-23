@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10
 --- !u!21 &2100000
 Material:
   serializedVersion: 8
@@ -37,7 +37,8 @@ Material:
   m_CustomRenderQueue: -1
   stringTagMap:
     RenderType: Opaque
-  disabledShaderPasses: []
+  disabledShaderPasses:
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
@@ -120,6 +121,14 @@ Material:
         m_Offset: {x: 0, y: 0}
     - _Normal_Map:
         m_Texture: {fileID: 2800000, guid: 25ad595464c834b489338970bc313a67, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _NorthStarDefaultShader_2cc307ac438d4f15b8ef9251ccc2dcb6_DetailMask_2422358792_Texture2D:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _NorthStarDefaultShader_2cc307ac438d4f15b8ef9251ccc2dcb6_ParallaxTexture_2611314226_Texture2D:
+        m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _OcclusionMap:
@@ -259,6 +268,7 @@ Material:
     - _GlossyReflections: 0
     - _GlowPower: 5
     - _IS_STANDARD_NORMAL_TEXTURE: 1
+    - _Is_Standard_Normal_Texture: 0
     - _Lighting_Addition: 0.5
     - _Lighting_Strenght: 0.5
     - _LightmapBias: 0
@@ -333,3 +343,4 @@ Material:
     - _UV_Scale: {r: 1, g: 1, b: 0, a: 0}
     - _Water_Height_Color: {r: 1, g: 0.8989315, b: 0.6933962, a: 0.7607843}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1

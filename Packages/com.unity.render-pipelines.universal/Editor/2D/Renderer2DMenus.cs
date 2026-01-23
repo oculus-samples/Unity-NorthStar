@@ -4,6 +4,8 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.Rendering;
+using System.IO;
+using UnityEngine.Analytics;
 
 
 namespace UnityEditor.Rendering.Universal
@@ -23,11 +25,34 @@ namespace UnityEditor.Rendering.Universal
 
             public override void Action(int instanceId, string pathName, string resourceFile)
             {
-                var instance = UniversalRenderPipelineAsset.CreateRendererAsset(pathName, RendererType._2DRenderer, false) as Renderer2DData;
+                var instance = CreateRendererAsset(pathName, RendererType._2DRenderer, false) as Renderer2DData;
                 Selection.activeObject = instance;
 
                 onCreated?.Invoke(instance);
             }
+        }
+
+        static ScriptableRendererData CreateRendererAsset(string path, RendererType type, bool relativePath = true, string suffix = "Renderer")
+        {
+            string packagePath = "Packages/com.unity.render-pipelines.universal";
+
+            ScriptableRendererData data = CreateRendererData(type);
+            string dataPath;
+            if (relativePath)
+                dataPath =
+                    $"{Path.Combine(Path.GetDirectoryName(path), Path.GetFileNameWithoutExtension(path))}_{suffix}{Path.GetExtension(path)}";
+            else
+                dataPath = path;
+            AssetDatabase.CreateAsset(data, dataPath);
+            ResourceReloader.ReloadAllNullIn(data, packagePath);
+            return data;
+        }
+
+        static ScriptableRendererData CreateRendererData(RendererType type)
+        {
+            var rendererData = ScriptableObject.CreateInstance<Renderer2DData>();
+            rendererData.postProcessData = PostProcessData.GetDefaultPostProcessData();
+            return rendererData;
         }
 
         internal static void PlaceGameObjectInFrontOfSceneView(GameObject go)
@@ -76,8 +101,10 @@ namespace UnityEditor.Rendering.Universal
 
         static Light2D CreateLight(MenuCommand menuCommand, Light2D.LightType type, Vector3[] shapePath = null)
         {
-            GameObject go = ObjectFactory.CreateGameObject("Light 2D", typeof(Light2D));
+            var lightName = type != Light2D.LightType.Point ? type.ToString() : "Spot";
+            GameObject go = ObjectFactory.CreateGameObject(lightName + " Light 2D", typeof(Light2D));
             Light2D light2D = go.GetComponent<Light2D>();
+            light2D.batchSlotIndex = LightBatch.batchSlotIndex;
             light2D.lightType = type;
 
             if (shapePath != null && shapePath.Length > 0)
@@ -86,11 +113,8 @@ namespace UnityEditor.Rendering.Universal
             var parent = menuCommand.context as GameObject;
             Place(go, parent);
 
-            Analytics.Light2DData lightData = new Analytics.Light2DData();
-            lightData.was_create_event = true;
-            lightData.instance_id = light2D.GetInstanceID();
-            lightData.light_type = light2D.lightType;
-            Analytics.Renderer2DAnalytics.instance.SendData(Analytics.AnalyticsDataTypes.k_LightDataString, lightData);
+            Analytics.LightDataAnalytic lightData = new Analytics.LightDataAnalytic(light2D.GetInstanceID(), true, light2D.lightType);
+            Analytics.Renderer2DAnalytics.instance.SendData(lightData);
 
             return light2D;
         }
@@ -168,7 +192,7 @@ namespace UnityEditor.Rendering.Universal
             public override void Action(int instanceId, string pathName, string resourceFile)
             {
                 //Create asset
-                AssetDatabase.CreateAsset(UniversalRenderPipelineAsset.Create(UniversalRenderPipelineAsset.CreateRendererAsset(pathName, RendererType._2DRenderer)), pathName);
+                AssetDatabase.CreateAsset(UniversalRenderPipelineAsset.Create(CreateRendererAsset(pathName, RendererType._2DRenderer)), pathName);
             }
         }
 
@@ -184,12 +208,8 @@ namespace UnityEditor.Rendering.Universal
         {
             Renderer2DMenus.Create2DRendererData((instance) =>
             {
-                Analytics.RendererAssetData modifiedData = new Analytics.RendererAssetData();
-                modifiedData.instance_id = instance.GetInstanceID();
-                modifiedData.was_create_event = true;
-                modifiedData.blending_layers_count = 1;
-                modifiedData.blending_modes_used = 2;
-                Analytics.Renderer2DAnalytics.instance.SendData(Analytics.AnalyticsDataTypes.k_Renderer2DDataString, modifiedData);
+                Analytics.RenderAssetAnalytic modifiedData = new Analytics.RenderAssetAnalytic(instance.GetInstanceID(), true, 1, 2);
+                Analytics.Renderer2DAnalytics.instance.SendData(modifiedData);
             });
         }
     }

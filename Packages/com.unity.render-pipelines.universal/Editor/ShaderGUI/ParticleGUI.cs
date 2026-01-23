@@ -276,6 +276,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGUI
             {
                 // Surface Option Props
                 colorMode = BaseShaderGUI.FindProperty("_ColorMode", properties, false);
+
                 // Advanced Props
                 flipbookMode = BaseShaderGUI.FindProperty("_FlipbookBlending", properties);
                 softParticlesEnabled = BaseShaderGUI.FindProperty("_SoftParticlesEnabled", properties);

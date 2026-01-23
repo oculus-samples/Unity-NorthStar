@@ -62,6 +62,11 @@ namespace UnityEngine.Rendering.Universal
         void TileLight(int lightIndex)
         {
             var light = lights[lightIndex];
+            if (light.lightType != LightType.Point && light.lightType != LightType.Spot)
+            {
+                return;
+            }
+
             var lightToWorld = (float4x4)light.localToWorldMatrix;
             var lightPositionVS = math.mul(worldToViews[m_ViewIndex], math.float4(lightToWorld.c3.xyz, 1)).xyz;
             lightPositionVS.z *= -1;
@@ -431,7 +436,7 @@ namespace UnityEngine.Rendering.Universal
                 points[i] = point;
                 if (point.z >= near)
                 {
-                    var clippedPoint = isOrthographic ? point.xy : point.xy / point.z;
+                    var clippedPoint = isOrthographic ? point.xy : point.xy/point.z;
                     var clippedIndex = clippedPointsCount++;
                     clippedPoints[clippedIndex] = clippedPoint;
                     if (clippedPoint.x < clippedPoints[leftmostIndex].x) leftmostIndex = clippedIndex;
@@ -446,7 +451,7 @@ namespace UnityEngine.Rendering.Universal
                 var p0 = points[indices.x];
                 for (var j = 0; j < 3; j++)
                 {
-                    var p1 = points[indices[j + 1]];
+                    var p1 = points[indices[j+1]];
                     // The entire line is in front of the near plane.
                     if (p0.z < near && p1.z < near) continue;
                     // Check whether the line needs clipping.
@@ -454,7 +459,7 @@ namespace UnityEngine.Rendering.Universal
                     {
                         var d = (near - p0.z) / (p1.z - p0.z);
                         var p = math.lerp(p0, p1, d);
-                        var clippedPoint = isOrthographic ? p.xy : p.xy / p.z;
+                        var clippedPoint = isOrthographic ? p.xy : p.xy/p.z;
                         var clippedIndex = clippedPointsCount++;
                         clippedPoints[clippedIndex] = clippedPoint;
                         if (clippedPoint.x < clippedPoints[leftmostIndex].x) leftmostIndex = clippedIndex;

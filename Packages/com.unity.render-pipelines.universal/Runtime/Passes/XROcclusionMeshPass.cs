@@ -1,5 +1,6 @@
 #if ENABLE_VR && ENABLE_XR_MODULE
-using UnityEngine.Experimental.Rendering.RenderGraphModule;
+using System;
+using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Experimental.Rendering;
 
 namespace UnityEngine.Rendering.Universal
@@ -11,51 +12,74 @@ namespace UnityEngine.Rendering.Universal
     {
         PassData m_PassData;
 
+        /// <summary>
+        /// Used to indicate if the active target of the pass is the back buffer
+        /// </summary>
+        public bool m_IsActiveTargetBackBuffer; // TODO: Remove this when we remove non-RG path
+
         public XROcclusionMeshPass(RenderPassEvent evt)
         {
-            base.profilingSampler = new ProfilingSampler(nameof(XROcclusionMeshPass));
+            profilingSampler = new ProfilingSampler("Draw XR Occlusion Mesh");
             renderPassEvent = evt;
             m_PassData = new PassData();
-            base.profilingSampler = new ProfilingSampler("XR Occlusion Pass");
+            m_IsActiveTargetBackBuffer = false;
         }
 
-        private static void ExecutePass(ScriptableRenderContext context, ref RenderingData renderingData)
+        private static void ExecutePass(RasterCommandBuffer cmd, PassData data)
         {
-            var cmd = renderingData.commandBuffer;
-
-            if (renderingData.cameraData.xr.hasValidOcclusionMesh)
+            if (data.xr.hasValidOcclusionMesh)
             {
-                renderingData.cameraData.xr.RenderOcclusionMesh(cmd);
-                context.ExecuteCommandBuffer(cmd);
-                cmd.Clear();
+                if (data.isActiveTargetBackBuffer)
+                    cmd.SetViewport(data.xr.GetViewport());
+
+                data.xr.RenderOcclusionMesh(cmd, renderIntoTexture: !data.isActiveTargetBackBuffer);
             }
         }
 
         /// <inheritdoc/>
+        [Obsolete(DeprecationMessage.CompatibilityScriptingAPIObsolete, false)]
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
-            ExecutePass(context, ref renderingData);
+            m_PassData.xr = renderingData.cameraData.xr;
+            m_PassData.isActiveTargetBackBuffer = m_IsActiveTargetBackBuffer;
+            ExecutePass(CommandBufferHelpers.GetRasterCommandBuffer(renderingData.commandBuffer), m_PassData);
         }
 
         private class PassData
         {
-            internal RenderingData renderingData;
+            internal XRPass xr;
+            internal TextureHandle cameraColorAttachment;
             internal TextureHandle cameraDepthAttachment;
+            internal bool isActiveTargetBackBuffer;
         }
 
-        internal void Render(RenderGraph renderGraph, in TextureHandle cameraDepthAttachment, ref RenderingData renderingData)
+        internal void Render(RenderGraph renderGraph, ContextContainer frameData, in TextureHandle cameraColorAttachment, in TextureHandle cameraDepthAttachment)
         {
-            using (var builder = renderGraph.AddRenderPass<PassData>("XR Occlusion Pass", out var passData, base.profilingSampler))
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
+
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out var passData, profilingSampler))
             {
-                passData.renderingData = renderingData;
-                passData.cameraDepthAttachment = builder.UseDepthBuffer(cameraDepthAttachment, DepthAccess.Write);
+                passData.xr = cameraData.xr;
+				passData.cameraColorAttachment = cameraColorAttachment;
+                builder.SetRenderAttachment(cameraColorAttachment, 0);
+                passData.cameraDepthAttachment = cameraDepthAttachment;
+                builder.SetRenderAttachmentDepth(cameraDepthAttachment, AccessFlags.Write);
+
+                passData.isActiveTargetBackBuffer = resourceData.isActiveTargetBackBuffer;
 
                 //  TODO RENDERGRAPH: culling? force culling off for testing
                 builder.AllowPassCulling(false);
-
-                builder.SetRenderFunc((PassData data, RenderGraphContext context) =>
+                builder.AllowGlobalStateModification(true);
+                if (cameraData.xr.enabled)
                 {
-                    ExecutePass(context.renderContext, ref data.renderingData);
+                    bool passSupportsFoveation = cameraData.xrUniversal.canFoveateIntermediatePasses || resourceData.isActiveTargetBackBuffer;
+                    builder.EnableFoveatedRasterization(cameraData.xr.supportsFoveatedRendering && passSupportsFoveation);
+                }
+
+                builder.SetRenderFunc((PassData data, RasterGraphContext context) =>
+                {
+                    ExecutePass(context.cmd, data);
                 });
 
                 return;

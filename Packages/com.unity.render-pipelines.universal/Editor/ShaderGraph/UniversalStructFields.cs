@@ -17,14 +17,12 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 subscriptOptions: StructFieldOptions.Optional);
             public static FieldDescriptor shadowCoord = new FieldDescriptor(Varyings.name, "shadowCoord", "VARYINGS_NEED_SHADOWCOORD", ShaderValueType.Float4,
                 subscriptOptions: StructFieldOptions.Optional, preprocessor: "defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)");
+            public static FieldDescriptor probeOcclusion = new FieldDescriptor(Varyings.name, "probeOcclusion", "", ShaderValueType.Float4,
+                preprocessor: "defined(USE_APV_PROBE_OCCLUSION)", subscriptOptions: StructFieldOptions.Optional);
             public static FieldDescriptor stereoTargetEyeIndexAsRTArrayIdx = new FieldDescriptor(Varyings.name, "stereoTargetEyeIndexAsRTArrayIdx", "", ShaderValueType.Uint,
                 "SV_RenderTargetArrayIndex", "(defined(UNITY_STEREO_INSTANCING_ENABLED))", StructFieldOptions.Generated);
             public static FieldDescriptor stereoTargetEyeIndexAsBlendIdx0 = new FieldDescriptor(Varyings.name, "stereoTargetEyeIndexAsBlendIdx0", "", ShaderValueType.Uint,
                 "BLENDINDICES0", "(defined(UNITY_STEREO_MULTIVIEW_ENABLED)) || (defined(UNITY_STEREO_INSTANCING_ENABLED) && (defined(SHADER_API_GLES3) || defined(SHADER_API_GLCORE)))");
-            public static FieldDescriptor curPositionCS = new FieldDescriptor(Varyings.name, "curPositionCS", "VARYINGS_NEED_CURRENT_POSITION_CS", ShaderValueType.Float4,
-                subscriptOptions: StructFieldOptions.Optional);
-            public static FieldDescriptor prevPositionCS = new FieldDescriptor(Varyings.name, "prevPositionCS", "VARYINGS_NEED_PREVIOUS_POSITION_CS", ShaderValueType.Float4,
-                subscriptOptions: StructFieldOptions.Optional);
         }
     }
 }

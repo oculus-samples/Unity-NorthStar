@@ -19,6 +19,11 @@ namespace NorthStar
         private void Update()
         {
             var pos = m_convertFromBoatSpace ? BoatController.WorldToBoatSpace(transform.position) : transform.position;
+            if (!EnvironmentSystem.Instance)
+            {
+                return;
+            }
+
             var waterHeight = EnvironmentSystem.Instance.GetOceanHeightIterative(pos, 1);
             if (transform.position.y - m_radius < waterHeight && !m_isUnderWater)
             {

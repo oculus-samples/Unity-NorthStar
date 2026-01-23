@@ -2,6 +2,8 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
 {
     SubShader
     {
+        Tags{ "RenderPipeline" = "UniversalPipeline" }
+        
         // Additive
         Pass
         {
@@ -19,10 +21,10 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #pragma target 3.0
             #pragma vertex vert
             #pragma fragment frag
-            #pragma exclude_renderers gles
 
-            #pragma multi_compile_fragment _ FLARE_CIRCLE FLARE_POLYGON
             #pragma multi_compile_fragment _ FLARE_INVERSE_SDF
+
+            #pragma multi_compile_vertex _ FLARE_OPENGL3_OR_OPENGLCORE
 
             #pragma multi_compile _ FLARE_HAS_OCCLUSION
 
@@ -33,6 +35,7 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/Shaders/PostProcessing/Common.hlsl"
 
+            #define FLARE_ADDITIVE_BLEND
             #include "Packages/com.unity.render-pipelines.core/Runtime/PostProcessing/Shaders/LensFlareCommon.hlsl"
 
             ENDHLSL
@@ -55,10 +58,10 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #pragma target 3.0
             #pragma vertex vert
             #pragma fragment frag
-            #pragma exclude_renderers gles
 
-            #pragma multi_compile_fragment _ FLARE_CIRCLE FLARE_POLYGON
             #pragma multi_compile_fragment _ FLARE_INVERSE_SDF
+
+            #pragma multi_compile_vertex _ FLARE_OPENGL3_OR_OPENGLCORE
 
             #pragma multi_compile _ FLARE_HAS_OCCLUSION
 
@@ -69,6 +72,7 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/Shaders/PostProcessing/Common.hlsl"
 
+            #define FLARE_SCREEN_BLEND
             #include "Packages/com.unity.render-pipelines.core/Runtime/PostProcessing/Shaders/LensFlareCommon.hlsl"
 
             ENDHLSL
@@ -91,10 +95,10 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #pragma target 3.0
             #pragma vertex vert
             #pragma fragment frag
-            #pragma exclude_renderers gles
 
-            #pragma multi_compile_fragment _ FLARE_CIRCLE FLARE_POLYGON
             #pragma multi_compile_fragment _ FLARE_INVERSE_SDF
+
+            #pragma multi_compile_vertex _ FLARE_OPENGL3_OR_OPENGLCORE
 
             #pragma multi_compile _ FLARE_HAS_OCCLUSION
 
@@ -105,6 +109,7 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/Shaders/PostProcessing/Common.hlsl"
 
+            #define FLARE_PREMULTIPLIED_BLEND
             #include "Packages/com.unity.render-pipelines.core/Runtime/PostProcessing/Shaders/LensFlareCommon.hlsl"
 
             ENDHLSL
@@ -127,10 +132,10 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #pragma target 3.0
             #pragma vertex vert
             #pragma fragment frag
-            #pragma exclude_renderers gles
 
-            #pragma multi_compile_fragment _ FLARE_CIRCLE FLARE_POLYGON
             #pragma multi_compile_fragment _ FLARE_INVERSE_SDF
+
+            #pragma multi_compile_vertex _ FLARE_OPENGL3_OR_OPENGLCORE
 
             #pragma multi_compile _ FLARE_HAS_OCCLUSION
 
@@ -141,6 +146,7 @@ Shader "Hidden/Universal Render Pipeline/LensFlareDataDriven"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/Shaders/PostProcessing/Common.hlsl"
 
+            #define FLARE_LERP_BLEND
             #include "Packages/com.unity.render-pipelines.core/Runtime/PostProcessing/Shaders/LensFlareCommon.hlsl"
 
             ENDHLSL

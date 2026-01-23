@@ -1,7 +1,6 @@
 Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
 {
     HLSLINCLUDE
-        #pragma exclude_renderers gles
         #pragma multi_compile_local_fragment _ _USE_FAST_SRGB_LINEAR_CONVERSION
 
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
@@ -20,7 +19,6 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
         TEXTURE2D_X(_FullCoCTexture);
 
         half4 _SourceSize;
-        half4 _HalfSourceSize;
         half4 _DownSampleScaleFactor;
         half4 _CoCParams;
         half4 _BokehKernel[SAMPLE_COUNT];
@@ -127,7 +125,7 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
 
         void Accumulate(half4 samp0, float2 uv, half4 disp, inout half4 farAcc, inout half4 nearAcc)
         {
-            half4 samp = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv + disp.wy);
+            half4 samp = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, ClampAndScaleUVForBilinear(uv + disp.wy, _BlitTexture_TexelSize.xy));
 
             // Compare CoC of the current sample and the center sample and select smaller one
             half farCoC = max(min(samp0.a, samp.a), 0.0);
@@ -171,7 +169,7 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
             // Normalize the total of the weights for the near field
             nearAcc.a *= PI / (SAMPLE_COUNT + 1);
 
-            // Alpha premultiplying
+            // Alpha premultiplying (total near field accumulation weight)
             half alpha = saturate(nearAcc.a);
             half3 rgb = lerp(farAcc.rgb, nearAcc.rgb, alpha);
 
@@ -186,10 +184,10 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
             // 9-tap tent filter with 4 bilinear samples
             float4 duv = _SourceSize.zwzw * _DownSampleScaleFactor.zwzw * float4(0.5, 0.5, -0.5, 0);
             half4 acc;
-            acc  = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv - duv.xy);
-            acc += SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv - duv.zy);
-            acc += SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv + duv.zy);
-            acc += SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv + duv.xy);
+            acc  = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, ClampUVForBilinear(uv - duv.xy, _BlitTexture_TexelSize.xy));
+            acc += SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, ClampUVForBilinear(uv - duv.zy, _BlitTexture_TexelSize.xy));
+            acc += SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, ClampUVForBilinear(uv + duv.zy, _BlitTexture_TexelSize.xy));
+            acc += SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, ClampUVForBilinear(uv + duv.xy, _BlitTexture_TexelSize.xy));
             return acc * 0.25;
         }
 
@@ -198,26 +196,37 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
             float2 uv = UnityStereoTransformScreenSpaceTex(input.texcoord);
 
-            half4 dof = SAMPLE_TEXTURE2D_X(_DofTexture, sampler_LinearClamp, uv);
-            half coc = SAMPLE_TEXTURE2D_X(_FullCoCTexture, sampler_LinearClamp, uv).r;
+            float dofDownSample = 2.0f;
+            half4 dof = SAMPLE_TEXTURE2D_X(_DofTexture, sampler_LinearClamp, ClampUVForBilinear(uv, _BlitTexture_TexelSize.xy * dofDownSample));
+            half coc = SAMPLE_TEXTURE2D_X(_FullCoCTexture, sampler_LinearClamp, ClampUVForBilinear(uv, _BlitTexture_TexelSize.xy)).r;
             coc = (coc - 0.5) * 2.0 * MaxRadius;
 
             // Convert CoC to far field alpha value
             float ffa = smoothstep(_SourceSize.w * 2.0, _SourceSize.w * 4.0, coc);
 
-            half4 color = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, uv);
+            half4 color = SAMPLE_TEXTURE2D_X(_BlitTexture, sampler_LinearClamp, ClampUVForBilinear(uv, _BlitTexture_TexelSize.xy));
 
         #if defined(UNITY_COLORSPACE_GAMMA)
             color = GetSRGBToLinear(color);
         #endif
 
             half alpha = Max3(dof.r, dof.g, dof.b);
-            color = lerp(color, half4(dof.rgb, alpha), ffa + dof.a - ffa * dof.a);
+            half4 outColor = lerp(color, half4(dof.rgb, alpha), ffa + dof.a - ffa * dof.a);
+
+        #if _ENABLE_ALPHA_OUTPUT
+            // Preserve the original value of the pixels with zero alpha
+            outColor.rgb = color.a > 0 ? outColor.rgb : color.rgb;
+            // The BokehDoF does not process source content alpha as it uses the alpha channel to pack CoC and near/far field weights.
+            // The outColor.a is an approximate mixed alpha between the sharp and the blurred (near+far) dof layers.
+            // It is not the actual blurred alpha of the source content.
+            // Keep the original alpha mask.
+            outColor.a = color.a;
+        #endif
 
         #if defined(UNITY_COLORSPACE_GAMMA)
-            color = GetLinearToSRGB(color);
+            outColor = GetLinearToSRGB(outColor);
         #endif
-            return color;
+            return outColor;
         }
 
     ENDHLSL
@@ -280,6 +289,7 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
                 #pragma vertex Vert
                 #pragma fragment FragComposite
                 #pragma target 4.5
+                #pragma multi_compile_fragment _ _ENABLE_ALPHA_OUTPUT
             ENDHLSL
         }
     }
@@ -343,6 +353,7 @@ Shader "Hidden/Universal Render Pipeline/BokehDepthOfField"
                 #pragma vertex Vert
                 #pragma fragment FragComposite
                 #pragma target 3.5
+                #pragma multi_compile_fragment _ _ENABLE_ALPHA_OUTPUT
             ENDHLSL
         }
     }

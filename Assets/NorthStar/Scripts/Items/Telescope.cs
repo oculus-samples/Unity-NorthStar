@@ -251,7 +251,7 @@ namespace NorthStar
                 m_eyeJoint.yMotion = ConfigurableJointMotion.Free;
                 m_eyeJoint.zMotion = ConfigurableJointMotion.Free;
 
-                m_telescopeEnd.Rigidbody.drag = 0;
+                m_telescopeEnd.Rigidbody.linearDamping = 0;
             }
             else if (strength < m_dampeningRatio)
             {
@@ -266,7 +266,7 @@ namespace NorthStar
                     m_eyeJoint.yMotion = ConfigurableJointMotion.Limited;
                     m_eyeJoint.zMotion = ConfigurableJointMotion.Limited;
                 }
-                m_telescopeEnd.Rigidbody.drag = m_dragCurve.Evaluate(strength / m_dampeningRatio);
+                m_telescopeEnd.Rigidbody.linearDamping = m_dragCurve.Evaluate(strength / m_dampeningRatio);
             }
             else
             {
@@ -283,7 +283,7 @@ namespace NorthStar
                     m_eyeJoint.yMotion = ConfigurableJointMotion.Locked;
                     m_eyeJoint.zMotion = ConfigurableJointMotion.Locked;
                 }
-                m_telescopeEnd.Rigidbody.drag = m_lockedDrag;
+                m_telescopeEnd.Rigidbody.linearDamping = m_lockedDrag;
             }
 
             m_eyeJoint.linearLimitSpring = springContainer;

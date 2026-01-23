@@ -250,7 +250,7 @@ namespace NorthStar
                 Debug.LogWarning("Teleporter has existing connections remove them before building", this);
                 return;
             }
-            foreach (var t in FindObjectsOfType<TeleportWaypoint>())
+            foreach (var t in FindObjectsByType<TeleportWaypoint>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
             {
                 if (t == this || Vector3.Distance(t.transform.position, transform.position) > AutoConnectionDistanceLimit)
                     continue;
@@ -262,7 +262,7 @@ namespace NorthStar
         [ContextMenu("Remove From Connections")]
         public void RemoveFromConnections()
         {
-            foreach (var t in FindObjectsOfType<TeleportWaypoint>())
+            foreach (var t in FindObjectsByType<TeleportWaypoint>(FindObjectsInactive.Exclude, FindObjectsSortMode.None))
             {
                 _ = t.Connections.Remove(this);
             }

@@ -1,12 +1,11 @@
-using System.Collections.Generic;
-using UnityEngine.Rendering.Universal;
-using UnityEngine.Rendering;
+using UnityEngine.Scripting.APIUpdating;
 
-namespace UnityEngine.Experimental.Rendering.Universal
+namespace UnityEngine.Rendering.Universal
 {
     /// <summary>
     /// The queue type for the objects to render.
     /// </summary>
+    [MovedFrom(true, "UnityEngine.Experimental.Rendering.Universal")]
     public enum RenderQueueType
     {
         /// <summary>
@@ -24,8 +23,9 @@ namespace UnityEngine.Experimental.Rendering.Universal
     /// The class for the render objects renderer feature.
     /// </summary>
     [ExcludeFromPreset]
+    [MovedFrom(true, "UnityEngine.Experimental.Rendering.Universal")]
     [Tooltip("Render Objects simplifies the injection of additional render passes by exposing a selection of commonly used settings.")]
-    [URPHelpURL("urp-renderer-feature", "#render-objects-renderer-featurea-namerender-objects-renderer-featurea")]
+    [URPHelpURL("renderer-features/renderer-feature-render-objects")]
     public class RenderObjects : ScriptableRendererFeature
     {
         /// <summary>
@@ -223,7 +223,7 @@ namespace UnityEngine.Experimental.Rendering.Universal
             }
 
             if (settings.overrideDepthState)
-                renderObjectsPass.SetDetphState(settings.enableWrite, settings.depthCompareFunction);
+                renderObjectsPass.SetDepthState(settings.enableWrite, settings.depthCompareFunction);
 
             if (settings.stencilSettings.overrideStencilState)
                 renderObjectsPass.SetStencilState(settings.stencilSettings.stencilReference,
@@ -234,6 +234,9 @@ namespace UnityEngine.Experimental.Rendering.Universal
         /// <inheritdoc/>
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
+            if (renderingData.cameraData.cameraType == CameraType.Preview
+                || UniversalRenderer.IsOffscreenDepthTexture(ref renderingData.cameraData))
+                return;
             renderer.EnqueuePass(renderObjectsPass);
         }
 

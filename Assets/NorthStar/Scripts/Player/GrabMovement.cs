@@ -40,7 +40,7 @@ namespace NorthStar
         [SerializeField] private HandGrabInteractor m_leftInteractor, m_rightInteractor;
 
         [SerializeField] private Transform m_leftAnchor, m_rightAnchor;
-        [SerializeField] private PhysicMaterial m_stationaryMaterial, m_movingMaterial;
+        [SerializeField] private PhysicsMaterial m_stationaryMaterial, m_movingMaterial;
         [SerializeField] private float m_movementMultiplier = 5;
 
         [SerializeField] private float m_groundDetectionRange;

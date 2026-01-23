@@ -28,7 +28,7 @@ Shader "Hidden/Universal Render Pipeline/LutBuilderHdr"
         float4 _ShaHiLimits;        // xy: shadows min/max, zw: highlight min/max
         float4 _SplitShadows;       // xyz: color, w: balance
         float4 _SplitHighlights;    // xyz: color, w: unused
-        float4 _HDROutputLuminanceParams; // xy: brightness min/max, z: paper white brightness, w: color primaries
+        float4 _HDROutputLuminanceParams; // xy: brightness min/max, z: paper white brightness, w: 1.0 / brightness max
         float4 _HDROutputGradingParams; // x: eetf/range reduction mode, y: hue shift, zw: unused
 
         TEXTURE2D(_CurveMaster);
@@ -208,7 +208,7 @@ Shader "Hidden/Universal Render Pipeline/LutBuilderHdr"
             #ifdef HDR_COLORSPACE_CONVERSION
                 #ifdef _TONEMAP_ACES
                 float3 aces = ACEScg_to_ACES(colorLinear);
-                return HDRMappingACES(aces.rgb, PaperWhite, RangeReductionMode, true);
+                return HDRMappingACES(aces.rgb, PaperWhite, MinNits, MaxNits, RangeReductionMode, true);
                 #elif _TONEMAP_NEUTRAL
                 return HDRMappingFromRec2020(colorLinear.rgb, PaperWhite, MinNits, MaxNits, RangeReductionMode, HueShift, true);
                 #else

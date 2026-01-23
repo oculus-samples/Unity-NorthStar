@@ -36,7 +36,7 @@ namespace UnityEngine.Rendering.Universal
     /// Options to control the renderer override.
     /// This enum is no longer in use.
     /// </summary>
-    //[Obsolete("Renderer override is no longer used, renderers are referenced by index on the pipeline asset.")]
+    [Obsolete("Renderer override is no longer used, renderers are referenced by index on the pipeline asset.")]
     public enum RendererOverrideOption
     {
         /// <summary>
@@ -204,6 +204,14 @@ namespace UnityEngine.Rendering.Universal
         {
             Assert.IsNotNull(cameraData, "cameraData can not be null when updating the volume stack.");
 
+            // UUM-91000: The UpdateVolumeStack may happens before the pipeline is constructed.
+            // Repro: enter play mode with a script that trigger this API at Start.
+            if (!VolumeManager.instance.isInitialized)
+            {
+                Debug.LogError($"{nameof(UpdateVolumeStack)} must not be called before {nameof(VolumeManager)}.{nameof(VolumeManager.instance)}.{nameof(VolumeManager.instance.Initialize)}. If you tries calling this from Awake or Start, try instead to use the {nameof(RenderPipelineManager)}.{nameof(RenderPipelineManager.activeRenderPipelineCreated)} callback to be sure your render pipeline is fully initialized before calling this.");
+                return;
+            }
+
             // We only update the local volume stacks for cameras set to ViaScripting.
             // Otherwise it will be updated in the frame.
             if (cameraData.requiresVolumeFrameworkUpdate)
@@ -292,7 +300,7 @@ namespace UnityEngine.Rendering.Universal
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Camera))]
-    [ImageEffectAllowedInSceneView]
+    [ExecuteAlways] // NOTE: This is required to get calls to OnDestroy() always. Graphics resources are released in OnDestroy().
     [URPHelpURL("universal-additional-camera-data")]
     public class UniversalAdditionalCameraData : MonoBehaviour, ISerializationCallbackReceiver, IAdditionalData
     {
@@ -343,7 +351,9 @@ namespace UnityEngine.Rendering.Universal
 
         // These persist over multiple frames
         [NonSerialized] MotionVectorsPersistentData m_MotionVectorsPersistentData = new MotionVectorsPersistentData();
-        [NonSerialized] TaaPersistentData m_TaaPersistentData = new TaaPersistentData();
+
+        // The URP camera history texture manager. Persistent per camera textures.
+        [NonSerialized] internal UniversalCameraHistory m_History = new UniversalCameraHistory();
 
         [SerializeField] internal TemporalAA.Settings m_TaaSettings = TemporalAA.Settings.Create();
 
@@ -378,6 +388,15 @@ namespace UnityEngine.Rendering.Universal
                 }
                 return m_Camera;
             }
+        }
+
+        void Start()
+        {
+            // Need to ensure correct behavoiur for overlay cameras settings their clear flag to nothing.
+            // This can't be done in the upgrade since the camera component can't be retrieved in the deserialization phase.
+            // OnValidate ensure future cameras won't have this issue.
+            if (m_CameraType == CameraRenderType.Overlay)
+                camera.clearFlags = CameraClearFlags.Nothing;
         }
 
 
@@ -599,12 +618,11 @@ namespace UnityEngine.Rendering.Universal
             {
                 // If the volume stack is being removed,
                 // add it back to the list so it can be reused later
-                if (value == null && m_VolumeStack != null)
+                if (value == null && m_VolumeStack != null && m_VolumeStack.isValid)
                 {
                     if (s_CachedVolumeStacks == null)
                         s_CachedVolumeStacks = new List<VolumeStack>(4);
 
-                    m_VolumeStack.Dispose();
                     s_CachedVolumeStacks.Add(m_VolumeStack);
                 }
 
@@ -623,8 +641,10 @@ namespace UnityEngine.Rendering.Universal
             if (s_CachedVolumeStacks != null && s_CachedVolumeStacks.Count > 0)
             {
                 int index = s_CachedVolumeStacks.Count - 1;
-                volumeStack = s_CachedVolumeStacks[index];
+                var stack = s_CachedVolumeStacks[index];
                 s_CachedVolumeStacks.RemoveAt(index);
+                if (stack.isValid)
+                    volumeStack = stack;
             }
 
             // Create a new stack if was not possible to reuse an old one
@@ -661,15 +681,26 @@ namespace UnityEngine.Rendering.Universal
             set => m_AntialiasingQuality = value;
         }
 
-        internal ref TemporalAA.Settings taaSettings
+        /// <summary>
+        /// Returns the current temporal anti-aliasing settings used by this camera.
+        /// </summary>
+        public ref TemporalAA.Settings taaSettings
         {
             get { return ref m_TaaSettings; }
         }
 
         /// <summary>
-        /// Temporal Anti-aliasing buffers and data that persists over a frame.
+        /// Returns the URP camera history texture read access.
+        /// Used to register requests and to read the existing history textures by external systems.
         /// </summary>
-        internal TaaPersistentData taaPersistentData => m_TaaPersistentData;
+        public ICameraHistoryReadAccess history => m_History;
+
+        // Returns the URP camera history texture manager with full access for internal systems.
+        // NOTE: Only the pipeline should write/render history textures. Should be kept internal.
+        //
+        // The history is camera specific. The UniversalAdditionalCameraData is the URP specific camera (data).
+        // Therefore it owns the UniversalCameraHistory. The history should follow the camera lifetime.
+        internal UniversalCameraHistory historyManager => m_History;
 
         /// <summary>
         /// Motion data that persists over a frame.
@@ -686,6 +717,10 @@ namespace UnityEngine.Rendering.Universal
             {
                 m_TaaSettings.resetHistoryFrames += value ? 1 : 0;
                 m_MotionVectorsPersistentData.Reset();
+
+                // Reset the jitter period for consistent test results.
+                // Not technically history, but this is here to avoid adding testing only public API.
+                m_TaaSettings.jitterFrameCountOffset = -Time.frameCount;
             }
         }
 
@@ -742,7 +777,7 @@ namespace UnityEngine.Rendering.Universal
             get => m_ScreenCoordScaleBias;
             set => m_ScreenCoordScaleBias = value;
         }
-        
+
         /// <summary>
         /// Returns true if this camera allows outputting to HDR displays.
         /// </summary>
@@ -764,6 +799,16 @@ namespace UnityEngine.Rendering.Universal
             {
                 m_RequiresDepthTextureOption = (m_RequiresDepthTexture) ? CameraOverrideOption.On : CameraOverrideOption.Off;
                 m_RequiresOpaqueTextureOption = (m_RequiresColorTexture) ? CameraOverrideOption.On : CameraOverrideOption.Off;
+                m_Version = 2;
+            }
+        }
+
+        /// <inheritdoc/>
+        public void OnValidate()
+        {
+            if (m_CameraType == CameraRenderType.Overlay && m_Camera != null)
+            {
+                m_Camera.clearFlags = CameraClearFlags.Nothing;
             }
         }
 
@@ -811,8 +856,31 @@ namespace UnityEngine.Rendering.Universal
         /// <inheritdoc/>
         public void OnDestroy()
         {
-            scriptableRenderer?.ReleaseRenderTargets();
+            //You cannot call scriptableRenderer here. If you where not in URP, this will actually create the renderer.
+            //This can occurs in cross pipeline but also on Dedicated Server where the gfx device do not run. (UUM-75237)
+            //Use GetRawRenderer() instead.
+            
             m_Camera.DestroyVolumeStack(this);
+            if (camera.cameraType != CameraType.SceneView)
+                GetRawRenderer()?.ReleaseRenderTargets();
+            m_History?.Dispose();
+            m_History = null;
+        }
+        
+        
+        ScriptableRenderer GetRawRenderer()
+        {
+            if (UniversalRenderPipeline.asset is null)
+                return null;
+
+            ReadOnlySpan<ScriptableRenderer> renderers = UniversalRenderPipeline.asset.renderers;
+            if (renderers == null || renderers.IsEmpty)
+                return null;
+
+            if (m_RendererIndex >= renderers.Length || m_RendererIndex < 0)
+                return null;
+
+            return renderers[m_RendererIndex];
         }
     }
 }

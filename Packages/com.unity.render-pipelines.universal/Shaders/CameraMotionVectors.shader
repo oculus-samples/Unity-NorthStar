@@ -10,10 +10,6 @@ Shader "Hidden/Universal Render Pipeline/CameraMotionVectors"
             ZWrite On
 
             HLSLPROGRAM
-            #pragma multi_compile_fragment _ _FOVEATED_RENDERING_NON_UNIFORM_RASTER
-            #pragma never_use_dxc metal
-
-            #pragma exclude_renderers d3d11_9x
             #pragma target 3.5
 
             #pragma vertex vert
@@ -24,21 +20,19 @@ Shader "Hidden/Universal Render Pipeline/CameraMotionVectors"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityInput.hlsl"
-            #if defined(_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
-                #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRendering.hlsl"
-            #endif
+            #include_with_pragmas "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRenderingKeywords.hlsl"
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRendering.hlsl"
 
-            // -------------------------------------
-            // Structs
             struct Attributes
             {
-                uint vertexID   : SV_VertexID;
+                uint vertexID : SV_VertexID;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct Varyings
             {
-                float4 position : SV_POSITION;
+                float4 positionCS : SV_POSITION;
+                float2 texcoord   : TEXCOORD0;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -50,37 +44,34 @@ Shader "Hidden/Universal Render Pipeline/CameraMotionVectors"
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
-                // TODO: Use Core Blitter vert.
-                output.position = GetFullScreenTriangleVertexPosition(input.vertexID);
+                float4 pos = GetFullScreenTriangleVertexPosition(input.vertexID);
+                float2 uv  = GetFullScreenTriangleTexCoord(input.vertexID);
+
+                output.positionCS = pos;
+                output.texcoord   = uv;
+
                 return output;
             }
-
-            #if defined(_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
-                // Non-uniform raster needs to keep the posNDC values in float to avoid additional conversions
-                // since uv remap functions use floats
-                #define POS_NDC_TYPE float2 
-            #else
-                #define POS_NDC_TYPE half2
-            #endif
 
             // -------------------------------------
             // Fragment
             half4 frag(Varyings input, out float outDepth : SV_Depth) : SV_Target
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
-
-                float2 uv = input.position.xy / _ScaledScreenParams.xy;
-
-                float depth = SampleSceneDepth(uv).x;
+                float2 uv = input.texcoord;
+                float depth = LoadSceneDepth(uv * _CameraDepthTexture_TexelSize.zw);
                 outDepth = depth; // Write depth out unmodified
 
             #if !UNITY_REVERSED_Z
                 depth = lerp(UNITY_NEAR_CLIP_VALUE, 1, SampleSceneDepth(uv).x);
             #endif
 
-            #if defined(_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
-                // Get the UVs from non-unifrom space to linear space to determine the right world-space position
-                uv = RemapFoveatedRenderingDistort(uv);
+            #if defined(SUPPORTS_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
+                UNITY_BRANCH if (_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
+                {
+                    // Get the UVs from non-unifrom space to linear space to determine the right world-space position
+                    uv = RemapFoveatedRenderingNonUniformToLinear(uv);
+                }
             #endif
 
                 // Reconstruct world position
@@ -90,35 +81,50 @@ Shader "Hidden/Universal Render Pipeline/CameraMotionVectors"
                 float4 posCS = mul(_NonJitteredViewProjMatrix, float4(posWS.xyz, 1.0));
                 float4 prevPosCS = mul(_PrevViewProjMatrix, float4(posWS.xyz, 1.0));
 
-                POS_NDC_TYPE posNDC = posCS.xy * rcp(posCS.w);
-                POS_NDC_TYPE prevPosNDC = prevPosCS.xy * rcp(prevPosCS.w);
+                // Non-uniform raster needs to keep the posNDC values in float to avoid additional conversions
+                // since uv remap functions use floats
+                float2 posNDC = posCS.xy * rcp(posCS.w);
+                float2 prevPosNDC = prevPosCS.xy * rcp(prevPosCS.w);
 
-                #if defined(_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
+                float2 velocity;
+                #if defined(SUPPORTS_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
+                UNITY_BRANCH if (_FOVEATED_RENDERING_NON_UNIFORM_RASTER)
+                {
                     // Convert velocity from NDC space (-1..1) to screen UV 0..1 space since FoveatedRendering remap needs that range.
                     // Also return both position in non-uniform UV space to get the right velocity vector
-                    half2 posUV = RemapFoveatedRenderingResolve(posNDC * 0.5f + 0.5f);
-                    half2 prevPosUV = RemapFoveatedRenderingPrevFrameResolve(prevPosNDC * 0.5f + 0.5f);
+
+                    float2 posUV = RemapFoveatedRenderingResolve(posNDC * 0.5f + 0.5f);
+                    float2 prevPosUV = RemapFoveatedRenderingPrevFrameLinearToNonUniform(prevPosNDC * 0.5f + 0.5f);
 
                     // Calculate forward velocity
-                    half2 velocity = (posUV - prevPosUV) * 2;
+                    // META CHANGE START: VR motion vector scale fix - velocity needs 2x multiplier for correct TAA
+                    velocity = (posUV - prevPosUV) * 2;
+                    // META CHANGE END
                     #if UNITY_UV_STARTS_AT_TOP
+                        // META CHANGE: Disabled Y-flip for VR stereo rendering compatibility
                         //velocity.y = -velocity.y;
                     #endif
-                #else
+                }
+                else
+                #endif
+                {
                     // Calculate forward velocity
-                    half2 velocity = (posNDC - prevPosNDC);
+                    velocity = (posNDC - prevPosNDC);
 
                     // TODO: test that velocity.y is correct
                     #if UNITY_UV_STARTS_AT_TOP
+                        // META CHANGE: Disabled Y-flip for VR stereo rendering compatibility
                         //velocity.y = -velocity.y;
                     #endif
 
                     // Convert velocity from NDC space (-1..1) to screen UV 0..1 space
                     // Note: It doesn't mean we don't have negative values, we store negative or positive offset in the UV space.
                     // Note: ((posNDC * 0.5 + 0.5) - (prevPosNDC * 0.5 + 0.5)) = (velocity * 0.5)
+                    // META CHANGE: Disabled 0.5 scaling for VR motion vector compatibility
                     //velocity.xy *= 0.5;
-                #endif
-                return half4(velocity, 0, 0);
+                }
+
+                return float4(velocity, 0, 0);
             }
 
             ENDHLSL

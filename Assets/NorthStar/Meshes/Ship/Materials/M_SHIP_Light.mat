@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 7
+  version: 10
 --- !u!21 &2100000
 Material:
   serializedVersion: 8
@@ -37,7 +37,8 @@ Material:
   m_CustomRenderQueue: -1
   stringTagMap:
     RenderType: Opaque
-  disabledShaderPasses: []
+  disabledShaderPasses:
+  - MOTIONVECTORS
   m_LockedProperties: 
   m_SavedProperties:
     serializedVersion: 3
@@ -122,6 +123,10 @@ Material:
         m_Texture: {fileID: 0}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _Parallax_Texture:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _SampleTexture2D_44a105a80ee243ba9fe5649083c6bc03_Texture_1_Texture2D:
         m_Texture: {fileID: 2800000, guid: b371e11b301690d48ac2a14535c97d41, type: 3}
         m_Scale: {x: 1, y: 1}
@@ -130,12 +135,20 @@ Material:
         m_Texture: {fileID: 2800000, guid: 70cd45634301391479404f31ec553547, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _SampleTexture2D_879deba925904fd0b61f17e0cec0ee8d_Texture_1_Texture2D:
+        m_Texture: {fileID: 2800000, guid: f68509435787d8446a7c0f129ca599ed, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     - _SampleTexture2D_8afe4aa8a79849b2914dd4367260e3bc_Texture_1_Texture2D:
         m_Texture: {fileID: 2800000, guid: 22b0c3333d3a2c246b301ac38182aee7, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _SampleTexture2D_bd60ae320f1e45e78ebfcd89b18c660e_Texture_1_Texture2D:
         m_Texture: {fileID: 2800000, guid: c67bae2f31325e84f92a39433e6ced61, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _SampleTexture2D_d48f2a885f694c68ba3b4bbcdcb3973a_Texture_1_Texture2D:
+        m_Texture: {fileID: 2800000, guid: f68509435787d8446a7c0f129ca599ed, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _SampleTexture2D_f92ef717718e4ea89fddcfbcb3e40040_Texture_1_Texture2D:
@@ -179,6 +192,7 @@ Material:
     - _DISABLENORMALTEXTURE: 0
     - _DetailAlbedoMapScale: 1
     - _DetailNormalMapScale: 1
+    - _DirtMaskStrength: 1
     - _DstBlend: 0
     - _DstBlendAlpha: 0
     - _EmissiveMaskValue: 0
@@ -188,6 +202,7 @@ Material:
     - _GlossMapScale: 0
     - _Glossiness: 0
     - _GlossyReflections: 0
+    - _Is_Standard_Normal_Texture: 0
     - _Main_Light_Color_Influence: 1
     - _Metallic: 0
     - _MetallicValue: 0
@@ -196,7 +211,9 @@ Material:
     - _OcclusionStrength: 1
     - _OpacityValue: 1
     - _Parallax: 0.005
+    - _Parallax_Amplitude: 1
     - _Parallax_Strength: 0.05
+    - _Pulse_Opacity: 0
     - _QueueControl: 0
     - _QueueOffset: 0
     - _RENDERINGMODE: 0
@@ -215,14 +232,22 @@ Material:
     - _USEDEFAULTNORMALTEXTURE: 0
     - _USE_CUSTOM_LIGHTING: 0
     - _USE_FRESNEL: 1
+    - _USE_INTERACTION_PULSE: 0
     - _USE_PARALLAX: 0
+    - _USE_TRIMSHEET_DETAILS: 0
     - _UseAmbientOcclusionMap: 0
+    - _UseAmbientOcclustionmap: 0
     - _UseEmissiveMaskMap: 0
     - _UseMetallicMap: 0
     - _UseOpacityMap: 0
     - _UseSmoothnessMap: 0
+    - _Use_Parallax: 0
     - _WaterHeight: -0.491
     - _Wet_Spec_Power_Boost: 0
+    - _WetnessSmoothingFactor: 1
+    - _WetnessSpreadMax: 1
+    - _WetnessSpreadMin: 0
+    - _WetnessSpreadOffset: 0
     - _WorkflowMode: 1
     - _ZTest: 4
     - _ZWrite: 1
@@ -233,7 +258,12 @@ Material:
     - _EmissionColor: {r: 4.9245777, g: 4.9245777, b: 4.9245777, a: 1}
     - _EmissiveColor: {r: 0, g: 0, b: 0, a: 0}
     - _FresnelColor: {r: 1, g: 0.5803921, b: 0, a: 1}
+    - _NormalValue: {r: 0, g: 0, b: 1, a: 0}
+    - _Offset: {r: 0, g: 0, b: 0, a: 0}
+    - _Pulse_Tint: {r: 4, g: 1.381703, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
     - _Spec_Color: {r: 0.3301887, g: 0.3301887, b: 0.3301887, a: 1}
+    - _Tiling: {r: 1, g: 1, b: 0, a: 0}
     - _Water_Height_Color: {r: 0.12156857, g: 0.18039218, b: 0.67058825, a: 1}
   m_BuildTextureStacks: []
+  m_AllowLocking: 1

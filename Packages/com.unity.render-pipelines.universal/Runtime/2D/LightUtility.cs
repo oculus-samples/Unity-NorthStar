@@ -6,9 +6,32 @@ using UnityEngine.U2D;
 
 namespace UnityEngine.Rendering.Universal
 {
+    // Per Light parameters to batch.
+    struct PerLight2D
+    {
+        internal float4x4 InvMatrix;
+        internal float4 Color;
+        internal float4 Position;
+        internal float FalloffIntensity;
+        internal float FalloffDistance;
+        internal float OuterAngle;
+        internal float InnerAngle;
+        internal float InnerRadiusMult;
+        internal float VolumeOpacity;
+        internal float ShadowIntensity;
+        internal int LightType;
+    };
+
     internal static class LightUtility
     {
         public static bool CheckForChange(Light2D.LightType a, ref Light2D.LightType b)
+        {
+            var changed = a != b;
+            b = a;
+            return changed;
+        }
+
+        public static bool CheckForChange(Component a, ref Component b)
         {
             var changed = a != b;
             b = a;
@@ -205,7 +228,7 @@ namespace UnityEngine.Rendering.Universal
             }
             List<List<IntPoint>> solution = new List<List<IntPoint>>();
             ClipperOffset clipOffset = new ClipperOffset(24.0f);
-            clipOffset.AddPath(path, JoinType.jtRound, EndType.etClosedPolygon);
+            clipOffset.AddPath(path, JoinTypes.jtRound, EndTypes.etClosedPolygon);
             clipOffset.Execute(ref solution, kClipperScale * offsetDistance, path.Count);
             if (solution.Count > 0)
             {
@@ -233,13 +256,16 @@ namespace UnityEngine.Rendering.Universal
             NativeArray<ushort>.Copy(indices, light.indices, indexCount);
         }
 
-        public static Bounds GenerateShapeMesh(Light2D light, Vector3[] shapePath, float falloffDistance)
+        public static Bounds GenerateShapeMesh(Light2D light, Vector3[] shapePath, float falloffDistance, float batchColor)
         {
             const float kClipperScale = 10000.0f;
 
+            var restoreState = Random.state;
+            Random.InitState(123456); // for deterministic output
+
             // todo Revisit this while we do Batching.
-            var meshInteriorColor = new Color(0.0f, 0, 0, 1.0f);
-            var meshExteriorColor = new Color(0.0f, 0, 0, 0.0f);
+            var meshInteriorColor = new Color(0, 0, batchColor, 1.0f);
+            var meshExteriorColor = new Color(0, 0, batchColor, 0.0f);
 
             // Create shape geometry based on edges
             int inEdgeCount = shapePath.Length;
@@ -274,8 +300,9 @@ namespace UnityEngine.Rendering.Universal
             List<IntPoint> path = new List<IntPoint>();
             for (var i = 0; i < inputPointCount; ++i)
             {
-                var newPoint = new Vector2(shapePath[i].x, shapePath[i].y) * kClipperScale;
-                var addPoint = new IntPoint((System.Int64)(newPoint.x) + Random.Range(-100, 100), (System.Int64)(newPoint.y) + Random.Range(-100, 100));
+                var nx = (System.Int64)((double)shapePath[i].x * (double)kClipperScale);
+                var ny = (System.Int64)((double)shapePath[i].y * (double)kClipperScale);
+                var addPoint = new IntPoint(nx + Random.Range(-10, 10), ny + Random.Range(-10, 10));
                 addPoint.N = i; addPoint.D = -1;
                 path.Add(addPoint);
             }
@@ -285,7 +312,7 @@ namespace UnityEngine.Rendering.Universal
             // Generate Bevels.
             List<List<IntPoint>> solution = new List<List<IntPoint>>();
             ClipperOffset clipOffset = new ClipperOffset(24.0f);
-            clipOffset.AddPath(path, JoinType.jtRound, EndType.etClosedPolygon);
+            clipOffset.AddPath(path, JoinTypes.jtRound, EndTypes.etClosedPolygon);
             clipOffset.Execute(ref solution, kClipperScale * falloffDistance, path.Count);
 
             if (solution.Count > 0)
@@ -389,10 +416,11 @@ namespace UnityEngine.Rendering.Universal
                 TransferToMesh(outVertices, vcount, outIndices, icount, light);
             }
 
+            Random.state = restoreState;
             return light.lightMesh.GetSubMesh(0).bounds;
         }
 
-        public static Bounds GenerateParametricMesh(Light2D light, float radius, float falloffDistance, float angle, int sides)
+        public static Bounds GenerateParametricMesh(Light2D light, float radius, float falloffDistance, float angle, int sides, float batchColor)
         {
             var angleOffset = Mathf.PI / 2.0f + Mathf.Deg2Rad * angle;
             if (sides < 3)
@@ -414,7 +442,7 @@ namespace UnityEngine.Rendering.Universal
             var mesh = light.lightMesh;
 
             // Only Alpha value in Color channel is ever used. May remove it or keep it for batching params in the future.
-            var color = new Color(0, 0, 0, 1);
+            var color = new Color(0, 0, batchColor, 1.0f);
             vertices[centerIndex] = new LightMeshVertex
             {
                 position = float3.zero,
@@ -435,7 +463,7 @@ namespace UnityEngine.Rendering.Universal
                 vertices[vertexIndex] = new LightMeshVertex
                 {
                     position = endPoint,
-                    color = new Color(extrudeDir.x, extrudeDir.y, 0, 0)
+                    color = new Color(extrudeDir.x, extrudeDir.y, batchColor, 0)
                 };
                 vertices[vertexIndex + 1] = new LightMeshVertex
                 {
@@ -479,7 +507,7 @@ namespace UnityEngine.Rendering.Universal
             };
         }
 
-        public static Bounds GenerateSpriteMesh(Light2D light, Sprite sprite)
+        public static Bounds GenerateSpriteMesh(Light2D light, Sprite sprite, float batchColor)
         {
             var mesh = light.lightMesh;
 
@@ -499,7 +527,7 @@ namespace UnityEngine.Rendering.Universal
 
             var center = 0.5f * (sprite.bounds.min + sprite.bounds.max);
             var vertices = new NativeArray<LightMeshVertex>(srcIndices.Length, Allocator.Temp);
-            var color = new Color(0, 0, 0, 1);
+            var color = new Color(0, 0, batchColor, 1);
 
             for (var i = 0; i < srcVertices.Length; i++)
             {

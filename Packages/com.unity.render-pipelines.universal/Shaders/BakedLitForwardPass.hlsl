@@ -26,9 +26,13 @@ struct Varyings
     half4 tangentWS : TEXCOORD3;
     #endif
 
-    #if defined(DEBUG_DISPLAY)
+    #if defined(DEBUG_DISPLAY) || (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
     float3 positionWS : TEXCOORD4;
     float3 viewDirWS : TEXCOORD5;
+    #endif
+
+    #ifdef USE_APV_PROBE_OCCLUSION
+    float4 probeOcclusion : TEXCOORD6;
     #endif
 
     UNITY_VERTEX_INPUT_INSTANCE_ID
@@ -41,6 +45,7 @@ void InitializeInputData(Varyings input, half3 normalTS, out InputData inputData
 
     #if defined(DEBUG_DISPLAY)
     inputData.positionWS = input.positionWS;
+    inputData.positionCS = input.positionCS;
     inputData.viewDirectionWS = input.viewDirWS;
     #else
     inputData.positionWS = float3(0, 0, 0);
@@ -60,7 +65,6 @@ void InitializeInputData(Varyings input, half3 normalTS, out InputData inputData
     inputData.shadowCoord = float4(0, 0, 0, 0);
     inputData.fogCoord = input.uv0AndFogCoord.z;
     inputData.vertexLighting = half3(0, 0, 0);
-    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.vertexSH, inputData.normalWS);
     inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
     inputData.shadowMask = half4(1, 1, 1, 1);
 
@@ -70,7 +74,25 @@ void InitializeInputData(Varyings input, half3 normalTS, out InputData inputData
     #else
     inputData.vertexSH = input.vertexSH;
     #endif
+    #if defined(USE_APV_PROBE_OCCLUSION)
+    inputData.probeOcclusion = input.probeOcclusion;
     #endif
+    #endif
+}
+
+void InitializeBakedGIData(Varyings input, inout InputData inputData)
+{
+#if !defined(LIGHTMAP_ON) && (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
+    inputData.bakedGI = SAMPLE_GI(input.vertexSH,
+        GetAbsolutePositionWS(input.positionWS),
+        inputData.normalWS,
+        input.viewDirWS,
+        input.positionCS.xy,
+        input.probeOcclusion,
+        inputData.shadowMask);
+#else
+    inputData.bakedGI = SAMPLE_GI(input.staticLightmapUV, input.vertexSH, inputData.normalWS);
+#endif
 }
 
 Varyings BakedLitForwardPassVertex(Attributes input)
@@ -100,9 +122,9 @@ Varyings BakedLitForwardPassVertex(Attributes input)
     output.tangentWS = half4(normalInput.tangentWS.xyz, sign);
     #endif
     OUTPUT_LIGHTMAP_UV(input.staticLightmapUV, unity_LightmapST, output.staticLightmapUV);
-    OUTPUT_SH(output.normalWS, output.vertexSH);
+    OUTPUT_SH4(vertexInput.positionWS, output.normalWS.xyz, GetWorldSpaceNormalizeViewDir(vertexInput.positionWS), output.vertexSH, output.probeOcclusion);
 
-    #if defined(DEBUG_DISPLAY)
+    #if defined(DEBUG_DISPLAY) || (defined(PROBE_VOLUMES_L1) || defined(PROBE_VOLUMES_L2))
     output.positionWS = vertexInput.positionWS;
     output.viewDirWS = GetWorldSpaceViewDir(vertexInput.positionWS);
     #endif
@@ -129,7 +151,7 @@ void BakedLitForwardPassFragment(
     #endif
     InputData inputData;
     InitializeInputData(input, normalTS, inputData);
-    SETUP_DEBUG_TEXTURE_DATA(inputData, input.uv0AndFogCoord.xy, _BaseMap);
+    SETUP_DEBUG_TEXTURE_DATA(inputData, UNDO_TRANSFORM_TEX(input.uv0AndFogCoord.xy, _BaseMap));
 
     half4 texColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv);
     half3 color = texColor.rgb * _BaseColor.rgb;
@@ -142,9 +164,11 @@ void BakedLitForwardPassFragment(
     LODFadeCrossFade(input.positionCS);
 #endif
 
-#ifdef _DBUFFER
+#if defined(_DBUFFER)
     ApplyDecalToBaseColorAndNormal(input.positionCS, color, inputData.normalWS);
 #endif
+
+    InitializeBakedGIData(input, inputData);
 
     half4 finalColor = UniversalFragmentBakedLit(inputData, color, alpha, normalTS);
 

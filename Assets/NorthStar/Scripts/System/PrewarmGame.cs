@@ -275,24 +275,48 @@ namespace NorthStar
 
         public class PrewarmRenderPassMV : PrewarmRenderPass
         {
+            private RTHandle m_motionVectorRTHandle;
+
             public PrewarmRenderPassMV(string profilerTag, PrewarmGame prewarmGame, RenderQueueRange renderQueueRange) : base(profilerTag, prewarmGame, renderQueueRange)
             {
             }
+
             public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
             {
-#pragma warning disable CS0618
                 ref var cameraData = ref renderingData.cameraData;
-                var motionVecHandle = new RenderTargetHandle(cameraData.xr.motionVectorRenderTarget);
-                var rtMotionId = motionVecHandle.Identifier();
-                rtMotionId = new RenderTargetIdentifier(rtMotionId, 0, CubemapFace.Unknown, -1);
-                ConfigureTarget(rtMotionId, rtMotionId);
+                // Unity 6: motionVectorRenderTarget is RenderTargetIdentifier, need to wrap in RTHandle
+                var rtMotionId = cameraData.xr.motionVectorRenderTarget;
+
+                // Allocate or update RTHandle wrapper
+                if (m_motionVectorRTHandle == null)
+                {
+                    m_motionVectorRTHandle = RTHandles.Alloc(rtMotionId);
+                }
+                else if (m_motionVectorRTHandle.nameID != rtMotionId)
+                {
+                    RTHandleStaticHelpers.SetRTHandleUserManagedWrapper(ref m_motionVectorRTHandle, rtMotionId);
+                }
+
+                // Configure target with RTHandle
+                ConfigureTarget(m_motionVectorRTHandle, m_motionVectorRTHandle);
                 base.OnCameraSetup(cmd, ref renderingData);
-#pragma warning restore CS0618
+            }
+
+            public override void OnCameraCleanup(CommandBuffer cmd)
+            {
+                Dispose();
+                base.OnCameraCleanup(cmd);
             }
 
             protected override bool IncludeInPass(ShaderVariantCollectionSO.ShaderData shaderData)
             {
                 return shaderData.PassType == PassType.MotionVectors;
+            }
+
+            public void Dispose()
+            {
+                m_motionVectorRTHandle?.Release();
+                m_motionVectorRTHandle = null;
             }
         }
 

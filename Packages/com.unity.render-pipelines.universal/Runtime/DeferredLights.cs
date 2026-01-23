@@ -5,7 +5,7 @@ using UnityEngine.Profiling;
 using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
-using UnityEngine.Experimental.Rendering.RenderGraphModule;
+using UnityEngine.Rendering.RenderGraphModule;
 using static Unity.Mathematics.math;
 //#define URP_HAS_BURST
 
@@ -93,6 +93,17 @@ namespace UnityEngine.Rendering.Universal.Internal
             "_GBuffer6"
         };
 
+        internal static readonly int[] k_GBufferShaderPropertyIDs = new int[]
+        {
+            Shader.PropertyToID(k_GBufferNames[0]),
+            Shader.PropertyToID(k_GBufferNames[1]),
+            Shader.PropertyToID(k_GBufferNames[2]),
+            Shader.PropertyToID(k_GBufferNames[3]),
+            Shader.PropertyToID(k_GBufferNames[4]),
+            Shader.PropertyToID(k_GBufferNames[5]),
+            Shader.PropertyToID(k_GBufferNames[6]),
+        };
+
         static readonly string[] k_StencilDeferredPassNames = new string[]
         {
             "Stencil Volume",
@@ -133,12 +144,14 @@ namespace UnityEngine.Rendering.Universal.Internal
         internal int GBufferSpecularMetallicIndex { get { return 1; } }
         internal int GBufferNormalSmoothnessIndex { get { return 2; } }
         internal int GBufferLightingIndex { get { return 3; } }
-        internal int GbufferDepthIndex { get { return UseRenderPass ? GBufferLightingIndex + 1 : -1; } }
-        internal int GBufferRenderingLayers { get { return UseRenderingLayers ? GBufferLightingIndex + (UseRenderPass ? 1 : 0) + 1 : -1; } }
+        internal int GbufferDepthIndex { get { return UseFramebufferFetch ? GBufferLightingIndex + 1 : -1; } }
+        internal int GBufferRenderingLayers { get { return UseRenderingLayers ? GBufferLightingIndex + (UseFramebufferFetch ? 1 : 0) + 1 : -1; } }
         // Shadow Mask can change at runtime. Because of this it needs to come after the non-changing buffers.
-        internal int GBufferShadowMask { get { return UseShadowMask ? GBufferLightingIndex + (UseRenderPass ? 1 : 0) + (UseRenderingLayers ? 1 : 0) + 1 : -1; } }
+        internal int GBufferShadowMask { get { return UseShadowMask ? GBufferLightingIndex + (UseFramebufferFetch ? 1 : 0) + (UseRenderingLayers ? 1 : 0) + 1 : -1; } }
         // Color buffer count (not including dephStencil).
-        internal int GBufferSliceCount { get { return 4 + (UseRenderPass ? 1 : 0) + (UseShadowMask ? 1 : 0) + (UseRenderingLayers ? 1 : 0); } }
+        internal int GBufferSliceCount { get { return 4 + (UseFramebufferFetch ? 1 : 0) + (UseShadowMask ? 1 : 0) + (UseRenderingLayers ? 1 : 0); } }
+
+        internal int GBufferInputAttachmentCount { get { return 4 + (UseShadowMask ? 1 : 0); } }
 
         internal GraphicsFormat GetGBufferFormat(int index)
         {
@@ -147,14 +160,14 @@ namespace UnityEngine.Rendering.Universal.Internal
             else if (index == GBufferSpecularMetallicIndex) // sRGB specular, [unused]
                 return GraphicsFormat.R8G8B8A8_UNorm;
             else if (index == GBufferNormalSmoothnessIndex)
-                return this.AccurateGbufferNormals ? GraphicsFormat.R8G8B8A8_UNorm : GraphicsFormat.R8G8B8A8_SNorm; // normal normal normal packedSmoothness
+                return AccurateGbufferNormals ? GraphicsFormat.R8G8B8A8_UNorm : DepthNormalOnlyPass.GetGraphicsFormat(); // normal normal normal packedSmoothness
             else if (index == GBufferLightingIndex) // Emissive+baked: Most likely B10G11R11_UFloatPack32 or R16G16B16A16_SFloat
                 return GraphicsFormat.None;
             else if (index == GbufferDepthIndex) // Render-pass on mobiles: reading back real depth-buffer is either inefficient (Arm Vulkan) or impossible (Metal).
                 return GraphicsFormat.R32_SFloat;
-            else if (index == GBufferShadowMask) // Optional: shadow mask is outputed in mixed lighting subtractive mode for non-static meshes only
+            else if (index == GBufferShadowMask) // Optional: shadow mask is outputted in mixed lighting subtractive mode for non-static meshes only
                 return GraphicsFormat.B8G8R8A8_UNorm;
-            else if (index == GBufferRenderingLayers) // Optional: rendering layers is outputed when light layers are enabled (subset of rendering layers)
+            else if (index == GBufferRenderingLayers) // Optional: rendering layers is outputted when light layers are enabled (subset of rendering layers)
                 return RenderingLayerUtils.GetFormat(RenderingLayerMaskSize);
             else
                 return GraphicsFormat.None;
@@ -171,22 +184,18 @@ namespace UnityEngine.Rendering.Universal.Internal
         //
         internal bool UseLightLayers { get { return UniversalRenderPipeline.asset.useRenderingLayers; } }
         //
-        internal bool UseRenderPass { get; set; }
+        internal bool UseFramebufferFetch { get; set; }
         //
         internal bool HasDepthPrepass { get; set; }
         //
         internal bool HasNormalPrepass { get; set; }
-        //
         internal bool HasRenderingLayerPrepass { get; set; }
+
         // This is an overlay camera being rendered.
         internal bool IsOverlay { get; set; }
-        // Not all platforms support R8G8B8A8_SNorm, so we need to check for the support and force accurate GBuffer normals and relevant shader variants
-        private bool m_AccurateGbufferNormals;
-        internal bool AccurateGbufferNormals
-        {
-            get { return m_AccurateGbufferNormals; }
-            set { m_AccurateGbufferNormals = value || !RenderingUtils.SupportsGraphicsFormat(GraphicsFormat.R8G8B8A8_SNorm, FormatUsage.Render); }
-        }
+
+        internal bool AccurateGbufferNormals { get; set; }
+
         // We browse all visible lights and found the mixed lighting setup every frame.
         internal MixedLightingSetup MixedLightingSetup { get; set; }
         //
@@ -250,9 +259,7 @@ namespace UnityEngine.Rendering.Universal.Internal
         {
             // Cache result for GL platform here. SystemInfo properties are in C++ land so repeated access will be unecessary penalized.
             // They can also only be called from main thread!
-            DeferredConfig.IsOpenGL = SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLCore
-                || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES2
-                || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3;
+            DeferredConfig.IsOpenGL = SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLCore || SystemInfo.graphicsDeviceType == GraphicsDeviceType.OpenGLES3;
 
             // Cachre result for DX10 platform too. Same reasons as above.
             DeferredConfig.IsDX10 = SystemInfo.graphicsDeviceType == GraphicsDeviceType.Direct3D11 && SystemInfo.graphicsShaderLevel <= 40;
@@ -264,68 +271,93 @@ namespace UnityEngine.Rendering.Universal.Internal
 
             this.AccurateGbufferNormals = true;
             this.UseJobSystem = true;
-            this.UseRenderPass = useNativeRenderPass;
+            this.UseFramebufferFetch = useNativeRenderPass;
             m_LightCookieManager = initParams.lightCookieManager;
         }
 
-        internal void SetupLights(ScriptableRenderContext context, ref RenderingData renderingData)
+        static ProfilingSampler s_SetupDeferredLights = new ProfilingSampler("Setup Deferred lights");
+        private class SetupLightPassData
+        {
+            internal UniversalCameraData cameraData;
+            internal UniversalLightData lightData;
+            internal DeferredLights deferredLights;
+
+            // The size of the camera target changes during the frame so we must make a copy of it here to preserve its record-time value.
+            internal Vector2Int cameraTargetSizeCopy;
+        };
+        /// <summary>
+        /// Sets up the ForwardLight data for RenderGraph execution
+        /// </summary>
+        internal void SetupRenderGraphLights(RenderGraph renderGraph, UniversalCameraData cameraData, UniversalLightData lightData)
+        {
+            using (var builder = renderGraph.AddUnsafePass<SetupLightPassData>(s_SetupDeferredLights.name, out var passData,
+                s_SetupDeferredLights))
+            {
+                passData.cameraData = cameraData;
+                passData.cameraTargetSizeCopy = new Vector2Int(cameraData.cameraTargetDescriptor.width, cameraData.cameraTargetDescriptor.height);
+                passData.lightData = lightData;
+                passData.deferredLights = this;
+
+                builder.AllowPassCulling(false);
+
+                builder.SetRenderFunc((SetupLightPassData data, UnsafeGraphContext rgContext) =>
+                {
+                    data.deferredLights.SetupLights(CommandBufferHelpers.GetNativeCommandBuffer(rgContext.cmd), data.cameraData, data.cameraTargetSizeCopy, data.lightData, true);
+                });
+            }
+        }
+
+        internal void SetupLights(CommandBuffer cmd, UniversalCameraData cameraData, Vector2Int cameraTargetSizeCopy, UniversalLightData lightData, bool isRenderGraph = false)
         {
             Profiler.BeginSample(k_SetupLights);
 
-            Camera camera = renderingData.cameraData.camera;
+            Camera camera = cameraData.camera;
             // Support for dynamic resolution.
-            this.RenderWidth = camera.allowDynamicResolution ? Mathf.CeilToInt(ScalableBufferManager.widthScaleFactor * renderingData.cameraData.cameraTargetDescriptor.width) : renderingData.cameraData.cameraTargetDescriptor.width;
-            this.RenderHeight = camera.allowDynamicResolution ? Mathf.CeilToInt(ScalableBufferManager.heightScaleFactor * renderingData.cameraData.cameraTargetDescriptor.height) : renderingData.cameraData.cameraTargetDescriptor.height;
+            this.RenderWidth = camera.allowDynamicResolution ? Mathf.CeilToInt(ScalableBufferManager.widthScaleFactor * cameraTargetSizeCopy.x) : cameraTargetSizeCopy.x;
+            this.RenderHeight = camera.allowDynamicResolution ? Mathf.CeilToInt(ScalableBufferManager.heightScaleFactor * cameraTargetSizeCopy.y) : cameraTargetSizeCopy.y;
 
-            // inspect lights in renderingData.lightData.visibleLights and convert them to entries in m_stencilVisLights
+            // inspect lights in lightData.visibleLights and convert them to entries in m_stencilVisLights
             PrecomputeLights(
                 out m_stencilVisLights,
                 out m_stencilVisLightOffsets,
-                ref renderingData.lightData.visibleLights,
-                renderingData.lightData.additionalLightsCount != 0 || renderingData.lightData.mainLightIndex >= 0,
-                renderingData.cameraData.camera.worldToCameraMatrix,
-                renderingData.cameraData.camera.orthographic,
-                renderingData.cameraData.camera.nearClipPlane
+                ref lightData.visibleLights,
+                lightData.additionalLightsCount != 0 || lightData.mainLightIndex >= 0
             );
 
             {
-                var cmd = renderingData.commandBuffer;
                 using (new ProfilingScope(cmd, m_ProfilingSetupLightConstants))
                 {
                     // Shared uniform constants for all lights.
-                    SetupShaderLightConstants(cmd, ref renderingData);
+                    SetupShaderLightConstants(cmd, lightData);
 
 #if UNITY_EDITOR
                     // This flag is used to strip mixed lighting shader variants when a player is built.
                     // All shader variants are available in the editor.
                     bool supportsMixedLighting = true;
 #else
-                    bool supportsMixedLighting = renderingData.lightData.supportsMixedLighting;
+                    bool supportsMixedLighting = lightData.supportsMixedLighting;
 #endif
 
                     // Setup global keywords.
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings._GBUFFER_NORMALS_OCT, this.AccurateGbufferNormals);
+                    cmd.SetKeyword(ShaderGlobalKeywords._GBUFFER_NORMALS_OCT, this.AccurateGbufferNormals);
                     bool isShadowMask = supportsMixedLighting && this.MixedLightingSetup == MixedLightingSetup.ShadowMask;
                     bool isShadowMaskAlways = isShadowMask && QualitySettings.shadowmaskMode == ShadowmaskMode.Shadowmask;
                     bool isSubtractive = supportsMixedLighting && this.MixedLightingSetup == MixedLightingSetup.Subtractive;
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.LightmapShadowMixing, isSubtractive || isShadowMaskAlways);
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.ShadowsShadowMask, isShadowMask);
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MixedLightingSubtractive, isSubtractive); // Backward compatibility
+                    cmd.SetKeyword(ShaderGlobalKeywords.LightmapShadowMixing, isSubtractive || isShadowMaskAlways);
+                    cmd.SetKeyword(ShaderGlobalKeywords.ShadowsShadowMask, isShadowMask);
+                    cmd.SetKeyword(ShaderGlobalKeywords.MixedLightingSubtractive, isSubtractive); // Backward compatibility
                     // This should be moved to a more global scope when framebuffer fetch is introduced to more passes
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.RenderPassEnabled, this.UseRenderPass && renderingData.cameraData.cameraType == CameraType.Game);
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.LightLayers, UseLightLayers);
+                    cmd.SetKeyword(ShaderGlobalKeywords.RenderPassEnabled, this.UseFramebufferFetch && (cameraData.cameraType == CameraType.Game || camera.cameraType == CameraType.SceneView || isRenderGraph));
+                    cmd.SetKeyword(ShaderGlobalKeywords.LightLayers, UseLightLayers && !CoreUtils.IsSceneLightingDisabled(camera));
 
                     RenderingLayerUtils.SetupProperties(cmd, RenderingLayerMaskSize);
                 }
-
-                context.ExecuteCommandBuffer(cmd);
-                cmd.Clear();
             }
 
             Profiler.EndSample();
         }
 
-        internal void ResolveMixedLightingMode(ref RenderingData renderingData)
+        internal void ResolveMixedLightingMode(UniversalLightData lightData)
         {
             // Find the mixed lighting mode. This is the same logic as ForwardLights.
             this.MixedLightingSetup = MixedLightingSetup.None;
@@ -333,11 +365,11 @@ namespace UnityEngine.Rendering.Universal.Internal
 #if !UNITY_EDITOR
             // This flag is used to strip mixed lighting shader variants when a player is built.
             // All shader variants are available in the editor.
-            if (renderingData.lightData.supportsMixedLighting)
+            if (lightData.supportsMixedLighting)
 #endif
             {
-                NativeArray<VisibleLight> visibleLights = renderingData.lightData.visibleLights;
-                for (int lightIndex = 0; lightIndex < renderingData.lightData.visibleLights.Length && this.MixedLightingSetup == MixedLightingSetup.None; ++lightIndex)
+                NativeArray<VisibleLight> visibleLights = lightData.visibleLights;
+                for (int lightIndex = 0; lightIndex < lightData.visibleLights.Length && this.MixedLightingSetup == MixedLightingSetup.None; ++lightIndex)
                 {
                     Light light = visibleLights.UnsafeElementAtMutable(lightIndex).light;
 
@@ -367,7 +399,7 @@ namespace UnityEngine.Rendering.Universal.Internal
         // To non-renderpass path in the middle of setup, which means recreating the gbuffer attachments as well due to GBuffer4 used for RenderPass
         internal void DisableFramebufferFetchInput()
         {
-            this.UseRenderPass = false;
+            this.UseFramebufferFetch = false;
             CreateGbufferResources();
         }
 
@@ -378,7 +410,10 @@ namespace UnityEngine.Rendering.Universal.Internal
                 // Release the old handles before creating the new one
                 for (int i = 0; i < this.GbufferRTHandles.Length; ++i)
                 {
-                    RTHandles.Release(this.GbufferRTHandles[i]);
+                    if (i == GBufferLightingIndex) // Not on GBuffer to release
+                        continue;
+                    this.GbufferRTHandles[i].Release();
+                    this.GbufferAttachments[i].Release();
                 }
             }
         }
@@ -391,11 +426,11 @@ namespace UnityEngine.Rendering.Universal.Internal
                 if (this.GbufferRTHandles[gbufferIndex].GetInstanceID() != this.GbufferAttachments[gbufferIndex].GetInstanceID())
                     return;
 
-                gbufferSlice.depthBufferBits = 0; // make sure no depth surface is actually created
+                gbufferSlice.depthStencilFormat = GraphicsFormat.None; // make sure no depth surface is actually created
                 gbufferSlice.stencilFormat = GraphicsFormat.None;
-                gbufferSlice.graphicsFormat = this.GetGBufferFormat(gbufferIndex);
-                RenderingUtils.ReAllocateIfNeeded(ref this.GbufferRTHandles[gbufferIndex], gbufferSlice, FilterMode.Point, TextureWrapMode.Clamp, name: DeferredLights.k_GBufferNames[gbufferIndex]);
-                this.GbufferAttachments[gbufferIndex] = this.GbufferRTHandles[gbufferIndex];
+                gbufferSlice.graphicsFormat = GetGBufferFormat(gbufferIndex);
+                RenderingUtils.ReAllocateHandleIfNeeded(ref GbufferRTHandles[gbufferIndex], gbufferSlice, FilterMode.Point, TextureWrapMode.Clamp, name: k_GBufferNames[gbufferIndex]);
+                GbufferAttachments[gbufferIndex] = GbufferRTHandles[gbufferIndex];
             }
         }
 
@@ -425,9 +460,22 @@ namespace UnityEngine.Rendering.Universal.Internal
             this.DeferredInputAttachments[1] = this.GbufferAttachments[1];
             this.DeferredInputAttachments[2] = this.GbufferAttachments[2];
             this.DeferredInputAttachments[3] = this.GbufferAttachments[4];
-            if (UseShadowMask)
+
+            if (UseShadowMask && UseRenderingLayers)
+            {
                 this.DeferredInputAttachments[4] = this.GbufferAttachments[GBufferShadowMask];
+                this.DeferredInputAttachments[5] = this.GbufferAttachments[GBufferRenderingLayers];
+            }
+            else if (UseShadowMask)
+            {
+                this.DeferredInputAttachments[4] = this.GbufferAttachments[GBufferShadowMask];
+            }
+            else if (UseRenderingLayers)
+            {
+                this.DeferredInputAttachments[4] = this.GbufferAttachments[GBufferRenderingLayers];
+            }
         }
+
 
         internal bool IsRuntimeSupportedThisFrame()
         {
@@ -436,7 +484,7 @@ namespace UnityEngine.Rendering.Universal.Internal
             return this.GBufferSliceCount <= SystemInfo.supportedRenderTargetCount && !DeferredConfig.IsOpenGL && !DeferredConfig.IsDX10;
         }
 
-        public void Setup(ref RenderingData renderingData,
+        public void Setup(
             AdditionalLightsShadowCasterPass additionalLightsShadowCasterPass,
             bool hasDepthPrepass,
             bool hasNormalPrepass,
@@ -455,9 +503,10 @@ namespace UnityEngine.Rendering.Universal.Internal
             this.GbufferAttachments[this.GBufferLightingIndex] = colorAttachment;
             this.DepthAttachment = depthAttachment;
 
-            if (this.DeferredInputAttachments == null && this.UseRenderPass && this.GbufferAttachments.Length >= 3)
+            var inputCount = 4 + (UseShadowMask ?  1 : 0) + (UseRenderingLayers ?  1 : 0);
+            if (this.DeferredInputAttachments == null && this.UseFramebufferFetch && this.GbufferAttachments.Length >= 3 ||
+                (this.DeferredInputAttachments != null && inputCount != this.DeferredInputAttachments.Length))
             {
-                var inputCount = 4 + (UseShadowMask ?  1 : 0);
                 this.DeferredInputAttachments = new RTHandle[inputCount];
                 this.DeferredInputIsTransient = new bool[inputCount];
                 int i, j = 0;
@@ -481,7 +530,7 @@ namespace UnityEngine.Rendering.Universal.Internal
         public void OnCameraCleanup(CommandBuffer cmd)
         {
             // Disable any global keywords setup in SetupLights().
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings._GBUFFER_NORMALS_OCT, false);
+            cmd.SetKeyword(ShaderGlobalKeywords._GBUFFER_NORMALS_OCT, false);
 
             if (m_stencilVisLights.IsCreated)
                 m_stencilVisLights.Dispose();
@@ -555,7 +604,7 @@ namespace UnityEngine.Rendering.Universal.Internal
             return block;
         }
 
-        internal void ClearStencilPartial(CommandBuffer cmd)
+        internal void ClearStencilPartial(RasterCommandBuffer cmd)
         {
             if (m_FullscreenMesh == null)
                 m_FullscreenMesh = CreateFullscreenMesh();
@@ -566,7 +615,7 @@ namespace UnityEngine.Rendering.Universal.Internal
             }
         }
 
-        internal void ExecuteDeferredPass(ScriptableRenderContext context, ref RenderingData renderingData)
+        internal void ExecuteDeferredPass(RasterCommandBuffer cmd, UniversalCameraData cameraData, UniversalLightData lightData, UniversalShadowData shadowData)
         {
             // Workaround for bug.
             // When changing the URP asset settings (ex: shadow cascade resolution), all ScriptableRenderers are recreated but
@@ -574,46 +623,54 @@ namespace UnityEngine.Rendering.Universal.Internal
             // which prevents from resolving correct pass indices.
             if (m_StencilDeferredPasses[0] < 0)
                 InitStencilDeferredMaterial();
+            
+            if (!UseFramebufferFetch)
+            {
+                for (int i = 0; i < GbufferTextureHandles.Length; i++)
+                {
+                    if (i != GBufferLightingIndex)
+                        m_StencilDeferredMaterial.SetTexture(k_GBufferShaderPropertyIDs[i], GbufferTextureHandles[i]);
+                }
+            }
 
-            var cmd = renderingData.commandBuffer;
             using (new ProfilingScope(cmd, m_ProfilingDeferredPass))
             {
                 // This does 2 things:
                 // - baked geometry are skipped (do not receive dynamic lighting)
                 // - non-baked geometry (== non-static geometry) use shadowMask/occlusionProbes to emulate baked shadows influences.
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings._DEFERRED_MIXED_LIGHTING, this.UseShadowMask);
+                cmd.SetKeyword(ShaderGlobalKeywords._DEFERRED_MIXED_LIGHTING, this.UseShadowMask);
 
                 // This must be set for each eye in XR mode multipass.
-                SetupMatrixConstants(cmd, ref renderingData);
+                SetupMatrixConstants(cmd, cameraData);
 
-                // Firt directional light will apply SSAO if possible, unless there is none.
+                // First directional light will apply SSAO if possible, unless there is none.
                 if (!HasStencilLightsOfType(LightType.Directional))
-                    RenderSSAOBeforeShading(cmd, ref renderingData);
+                    RenderSSAOBeforeShading(cmd);
 
-                RenderStencilLights(context, cmd, ref renderingData);
+                RenderStencilLights(cmd, lightData, shadowData, cameraData.renderer.stripShadowsOffVariants);
 
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings._DEFERRED_MIXED_LIGHTING, false);
+                cmd.SetKeyword(ShaderGlobalKeywords._DEFERRED_MIXED_LIGHTING, false);
 
                 // Legacy fog (Windows -> Rendering -> Lighting Settings -> Fog)
-                RenderFog(context, cmd, ref renderingData);
+                RenderFog(cmd, cameraData.camera.orthographic);
             }
 
             // Restore shader keywords
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.AdditionalLightShadows, renderingData.shadowData.isKeywordAdditionalLightShadowsEnabled);
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.SoftShadows, renderingData.shadowData.isKeywordSoftShadowsEnabled);
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.LightCookies, m_LightCookieManager != null && m_LightCookieManager.IsKeywordLightCookieEnabled);
+            cmd.SetKeyword(ShaderGlobalKeywords.AdditionalLightShadows, shadowData.isKeywordAdditionalLightShadowsEnabled);
+            ShadowUtils.SetSoftShadowQualityShaderKeywords(cmd, shadowData);
+            cmd.SetKeyword(ShaderGlobalKeywords.LightCookies, m_LightCookieManager != null && m_LightCookieManager.IsKeywordLightCookieEnabled);
         }
 
         // adapted from ForwardLights.SetupShaderLightConstants
-        void SetupShaderLightConstants(CommandBuffer cmd, ref RenderingData renderingData)
+        void SetupShaderLightConstants(CommandBuffer cmd, UniversalLightData lightData)
         {
             // Main light has an optimized shader path for main light. This will benefit games that only care about a single light.
             // Universal Forward pipeline only supports a single shadow light, if available it will be the main light.
-            SetupMainLightConstants(cmd, ref renderingData.lightData);
+            SetupMainLightConstants(cmd, lightData);
         }
 
         // adapted from ForwardLights.SetupShaderLightConstants
-        void SetupMainLightConstants(CommandBuffer cmd, ref LightData lightData)
+        void SetupMainLightConstants(CommandBuffer cmd, UniversalLightData lightData)
         {
             if (lightData.mainLightIndex < 0)
                 return;
@@ -621,67 +678,70 @@ namespace UnityEngine.Rendering.Universal.Internal
             Vector4 lightPos, lightColor, lightAttenuation, lightSpotDir, lightOcclusionChannel;
             UniversalRenderPipeline.InitializeLightConstants_Common(lightData.visibleLights, lightData.mainLightIndex, out lightPos, out lightColor, out lightAttenuation, out lightSpotDir, out lightOcclusionChannel);
 
-            var additionalLightData = lightData.visibleLights[lightData.mainLightIndex].light.GetUniversalAdditionalLightData();
-            uint lightLayerMask = RenderingLayerUtils.ToValidRenderingLayers(additionalLightData.renderingLayers);
+            if (lightData.supportsLightLayers)
+            {
+                Light light = lightData.visibleLights[lightData.mainLightIndex].light;
+                SetRenderingLayersMask(CommandBufferHelpers.GetRasterCommandBuffer(cmd), light, ShaderConstants._MainLightLayerMask);
+            }
 
             cmd.SetGlobalVector(ShaderConstants._MainLightPosition, lightPos);
             cmd.SetGlobalVector(ShaderConstants._MainLightColor, lightColor);
-            cmd.SetGlobalInt(ShaderConstants._MainLightLayerMask, (int)lightLayerMask);
         }
 
-        void SetupMatrixConstants(CommandBuffer cmd, ref RenderingData renderingData)
+        internal Matrix4x4[] GetScreenToWorldMatrix(UniversalCameraData cameraData)
         {
-            ref CameraData cameraData = ref renderingData.cameraData;
-
 #if ENABLE_VR && ENABLE_XR_MODULE
             int eyeCount = cameraData.xr.enabled && cameraData.xr.singlePassEnabled ? 2 : 1;
 #else
             int eyeCount = 1;
 #endif
+
             Matrix4x4[] screenToWorld = m_ScreenToWorld; // deferred shaders expects 2 elements
+
+            // pixel coordinates to NDC coordinates.
+            Matrix4x4 screenToNDC = new Matrix4x4(
+                new Vector4(2.0f / (float)this.RenderWidth, 0.0f, 0.0f, 0.0f),
+                new Vector4(0.0f, 2.0f / (float)this.RenderHeight, 0.0f, 0.0f),
+                new Vector4(0.0f, 0.0f, 1.0f, 0.0f),
+                new Vector4(-1.0f, -1.0f, 0.0f, 1.0f)
+            );
+
+            if (DeferredConfig.IsOpenGL)
+            {
+                // We need to manunally adjust z in NDC space from [0; 1] (storage in depth texture) to [-1; 1].
+                Matrix4x4 renormalizeZ = new Matrix4x4(
+                    new Vector4(1.0f, 0.0f, 0.0f, 0.0f),
+                    new Vector4(0.0f, 1.0f, 0.0f, 0.0f),
+                    new Vector4(0.0f, 0.0f, 2.0f, 0.0f),
+                    new Vector4(0.0f, 0.0f, -1.0f, 1.0f)
+                );
+
+                screenToNDC = renormalizeZ * screenToNDC;
+            }
 
             for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++)
             {
-                Matrix4x4 proj = cameraData.GetProjectionMatrix(eyeIndex);
                 Matrix4x4 view = cameraData.GetViewMatrix(eyeIndex);
-                Matrix4x4 gpuProj = GL.GetGPUProjectionMatrix(proj, false);
+                Matrix4x4 gpuProj = cameraData.GetGPUProjectionMatrix(false, eyeIndex);
 
-                // xy coordinates in range [-1; 1] go to pixel coordinates.
-                Matrix4x4 toScreen = new Matrix4x4(
-                    new Vector4(0.5f * this.RenderWidth, 0.0f, 0.0f, 0.0f),
-                    new Vector4(0.0f, 0.5f * this.RenderHeight, 0.0f, 0.0f),
-                    new Vector4(0.0f, 0.0f, 1.0f, 0.0f),
-                    new Vector4(0.5f * this.RenderWidth, 0.5f * this.RenderHeight, 0.0f, 1.0f)
-                );
-
-                Matrix4x4 zScaleBias = Matrix4x4.identity;
-                if (DeferredConfig.IsOpenGL)
-                {
-                    // We need to manunally adjust z in NDC space from [-1; 1] to [0; 1] (storage in depth texture).
-                    zScaleBias = new Matrix4x4(
-                        new Vector4(1.0f, 0.0f, 0.0f, 0.0f),
-                        new Vector4(0.0f, 1.0f, 0.0f, 0.0f),
-                        new Vector4(0.0f, 0.0f, 0.5f, 0.0f),
-                        new Vector4(0.0f, 0.0f, 0.5f, 1.0f)
-                    );
-                }
-
-                screenToWorld[eyeIndex] = Matrix4x4.Inverse(toScreen * zScaleBias * gpuProj * view);
+                screenToWorld[eyeIndex] = Matrix4x4.Inverse(gpuProj * view) * screenToNDC;
             }
 
-            cmd.SetGlobalMatrixArray(ShaderConstants._ScreenToWorld, screenToWorld);
+            return screenToWorld;
+        }
+
+        void SetupMatrixConstants(RasterCommandBuffer cmd, UniversalCameraData cameraData)
+        {
+            cmd.SetGlobalMatrixArray(ShaderConstants._ScreenToWorld, GetScreenToWorldMatrix(cameraData));
         }
 
         void PrecomputeLights(
             out NativeArray<ushort> stencilVisLights,
             out NativeArray<ushort> stencilVisLightOffsets,
             ref NativeArray<VisibleLight> visibleLights,
-            bool hasAdditionalLights,
-            Matrix4x4 view,
-            bool isOrthographic,
-            float zNear)
+            bool hasAdditionalLights)
         {
-            const int lightTypeCount = (int)LightType.Disc + 1;
+            const int lightTypeCount = (int)LightType.Tube + 1;
 
             if (!hasAdditionalLights)
             {
@@ -721,8 +781,16 @@ namespace UnityEngine.Rendering.Universal.Internal
             for (ushort visLightIndex = 0; visLightIndex < visibleLightCount; ++visLightIndex)
             {
                 ref VisibleLight vl = ref visibleLights.UnsafeElementAtMutable(visLightIndex);
-                int i = stencilLightCounts[(int)vl.lightType]++;
-                stencilVisLights[stencilVisLightOffsets[(int)vl.lightType] + i] = visLightIndex;
+                if (vl.lightType != LightType.Spot &&
+                    vl.lightType != LightType.Directional &&
+                    vl.lightType != LightType.Point)
+                {
+                    // The light type is not supported. Skip the light.
+                    continue;
+                }
+
+                int i = stencilLightCounts[(int) vl.lightType]++;
+                stencilVisLights[stencilVisLightOffsets[(int) vl.lightType] + i] = visLightIndex;
             }
             stencilLightCounts.Dispose();
         }
@@ -732,7 +800,7 @@ namespace UnityEngine.Rendering.Universal.Internal
             return m_stencilVisLightOffsets[(int)type] != k_InvalidLightOffset;
         }
 
-        void RenderStencilLights(ScriptableRenderContext context, CommandBuffer cmd, ref RenderingData renderingData)
+        void RenderStencilLights(RasterCommandBuffer cmd, UniversalLightData lightData, UniversalShadowData shadowData, bool stripShadowsOffVariants)
         {
             if (m_stencilVisLights.Length == 0)
                 return;
@@ -747,39 +815,40 @@ namespace UnityEngine.Rendering.Universal.Internal
 
             using (new ProfilingScope(cmd, m_ProfilingSamplerDeferredStencilPass))
             {
-                NativeArray<VisibleLight> visibleLights = renderingData.lightData.visibleLights;
+                NativeArray<VisibleLight> visibleLights = lightData.visibleLights;
+                bool hasLightCookieManager = m_LightCookieManager != null;
+                bool hasAdditionalLightPass = m_AdditionalLightsShadowCasterPass != null;
 
                 if (HasStencilLightsOfType(LightType.Directional))
-                    RenderStencilDirectionalLights(cmd, ref renderingData, visibleLights, renderingData.lightData.mainLightIndex);
-                if (HasStencilLightsOfType(LightType.Point))
-                    RenderStencilPointLights(cmd, ref renderingData, visibleLights);
-                if (HasStencilLightsOfType(LightType.Spot))
-                    RenderStencilSpotLights(cmd, ref renderingData, visibleLights);
+                    RenderStencilDirectionalLights(cmd, stripShadowsOffVariants, lightData, shadowData, visibleLights, hasAdditionalLightPass, hasLightCookieManager, lightData.mainLightIndex);
+
+                if (lightData.supportsAdditionalLights)
+                {
+                    if (HasStencilLightsOfType(LightType.Point))
+                        RenderStencilPointLights(cmd, stripShadowsOffVariants, lightData, shadowData, visibleLights, hasAdditionalLightPass, hasLightCookieManager);
+
+                    if (HasStencilLightsOfType(LightType.Spot))
+                        RenderStencilSpotLights(cmd, stripShadowsOffVariants, lightData, shadowData, visibleLights, hasAdditionalLightPass, hasLightCookieManager);
+                }
             }
 
             Profiler.EndSample();
         }
 
-        void SetAdditionalLightsShadowsKeyword(ref CommandBuffer cmd, ref RenderingData renderingData, bool hasDeferredShadows)
-        {
-            // The OFF variant is stripped out based on the stripShadowsOffVariants parameter in the renderer.
-            // This is done to improve build times. Instead a very small texture is sampled.
-            bool hasOffVariant = !renderingData.cameraData.renderer.stripShadowsOffVariants;
-            CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.AdditionalLightShadows, !hasOffVariant || hasDeferredShadows);
-        }
-
-        void RenderStencilDirectionalLights(CommandBuffer cmd, ref RenderingData renderingData, NativeArray<VisibleLight> visibleLights, int mainLightIndex)
+        void RenderStencilDirectionalLights(RasterCommandBuffer cmd, bool stripShadowsOffVariants, UniversalLightData lightData, UniversalShadowData shadowData, NativeArray<VisibleLight> visibleLights, bool hasAdditionalLightPass, bool hasLightCookieManager, int mainLightIndex)
         {
             if (m_FullscreenMesh == null)
                 m_FullscreenMesh = CreateFullscreenMesh();
 
-            cmd.EnableShaderKeyword(ShaderKeywordStrings._DIRECTIONAL);
-
-            // Directional lights.
-            bool isFirstLight = true;
+            cmd.SetKeyword(ShaderGlobalKeywords._DIRECTIONAL, true);
 
             // TODO bundle extra directional lights rendering by batches of 8.
             // Also separate shadow caster lights from non-shadow caster.
+            int lastLightCookieIndex = -1;
+            bool isFirstLight = true;
+            bool lastLightCookieKeywordState = false;
+            bool lastShadowsKeywordState = false;
+            bool lastSoftShadowsKeywordState = false;
             for (int soffset = m_stencilVisLightOffsets[(int)LightType.Directional]; soffset < m_stencilVisLights.Length; ++soffset)
             {
                 ushort visLightIndex = m_stencilVisLights[soffset];
@@ -797,34 +866,32 @@ namespace UnityEngine.Rendering.Universal.Internal
                 if (light.bakingOutput.lightmapBakeType == LightmapBakeType.Mixed)
                     lightFlags |= (int)LightFlag.SubtractiveMixedLighting;
 
-                var additionalLightData = light.GetUniversalAdditionalLightData();
-                uint lightLayerMask = RenderingLayerUtils.ToValidRenderingLayers(additionalLightData.renderingLayers);
+                if (lightData.supportsLightLayers)
+                    SetRenderingLayersMask(cmd, light, ShaderConstants._LightLayerMask);
 
-                // Setup shadow paramters:
+                // Setup shadow parameters:
                 // - for the main light, they have already been setup globally, so nothing to do.
                 // - for other directional lights, it is actually not supported by URP, but the code would look like this.
-                bool hasDeferredShadows;
-                if (visLightIndex == mainLightIndex)
+                bool hasDeferredShadows = light && light.shadows != LightShadows.None;
+                bool isMainLight = visLightIndex == mainLightIndex;
+                if (!isMainLight)
                 {
-                    hasDeferredShadows = light && light.shadows != LightShadows.None;
-                }
-                else
-                {
-                    int shadowLightIndex = m_AdditionalLightsShadowCasterPass != null ? m_AdditionalLightsShadowCasterPass.GetShadowLightIndexFromLightIndex(visLightIndex) : -1;
+                    int shadowLightIndex = hasAdditionalLightPass ? m_AdditionalLightsShadowCasterPass.GetShadowLightIndexFromLightIndex(visLightIndex) : -1;
                     hasDeferredShadows = light && light.shadows != LightShadows.None && shadowLightIndex >= 0;
                     cmd.SetGlobalInt(ShaderConstants._ShadowLightIndex, shadowLightIndex);
+                    SetLightCookiesKeyword(cmd, visLightIndex, hasLightCookieManager, isFirstLight, ref lastLightCookieKeywordState, ref lastLightCookieIndex);
                 }
-                SetAdditionalLightsShadowsKeyword(ref cmd, ref renderingData, hasDeferredShadows);
 
-                bool hasSoftShadow = hasDeferredShadows && renderingData.shadowData.supportsSoftShadows && light.shadows == LightShadows.Soft;
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.SoftShadows, hasSoftShadow);
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings._DEFERRED_FIRST_LIGHT, isFirstLight); // First directional light applies SSAO
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings._DEFERRED_MAIN_LIGHT, visLightIndex == mainLightIndex); // main directional light use different uniform constants from additional directional lights
+                // Update keywords states
+                SetAdditionalLightsShadowsKeyword(ref cmd, stripShadowsOffVariants, shadowData.additionalLightShadowsEnabled, hasDeferredShadows, isFirstLight, ref lastShadowsKeywordState);
+                SetSoftShadowsKeyword(cmd, shadowData, light, hasDeferredShadows, isFirstLight, ref lastSoftShadowsKeywordState);
+                cmd.SetKeyword(ShaderGlobalKeywords._DEFERRED_FIRST_LIGHT, isFirstLight); // First directional light applies SSAO
+                cmd.SetKeyword(ShaderGlobalKeywords._DEFERRED_MAIN_LIGHT, isMainLight); // main directional light use different uniform constants from additional directional lights
 
+                // Update Global properties
                 cmd.SetGlobalVector(ShaderConstants._LightColor, lightColor); // VisibleLight.finalColor already returns color in active color space
                 cmd.SetGlobalVector(ShaderConstants._LightDirection, lightDir);
                 cmd.SetGlobalInt(ShaderConstants._LightFlags, lightFlags);
-                cmd.SetGlobalInt(ShaderConstants._LightLayerMask, (int)lightLayerMask);
 
                 // Lighting pass.
                 cmd.DrawMesh(m_FullscreenMesh, Matrix4x4.identity, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.DirectionalLit]);
@@ -833,16 +900,21 @@ namespace UnityEngine.Rendering.Universal.Internal
                 isFirstLight = false;
             }
 
-            cmd.DisableShaderKeyword(ShaderKeywordStrings._DIRECTIONAL);
+            cmd.SetKeyword(ShaderGlobalKeywords._DIRECTIONAL, false);
         }
 
-        void RenderStencilPointLights(CommandBuffer cmd, ref RenderingData renderingData, NativeArray<VisibleLight> visibleLights)
+        void RenderStencilPointLights(RasterCommandBuffer cmd, bool stripShadowsOffVariants, UniversalLightData lightData, UniversalShadowData shadowData, NativeArray<VisibleLight> visibleLights, bool hasAdditionalLightPass, bool hasLightCookieManager)
         {
             if (m_SphereMesh == null)
                 m_SphereMesh = CreateSphereMesh();
 
-            cmd.EnableShaderKeyword(ShaderKeywordStrings._POINT);
+            cmd.SetKeyword(ShaderGlobalKeywords._POINT, true);
 
+            int lastLightCookieIndex = -1;
+            bool isFirstLight = true;
+            bool lastLightCookieKeywordState = false;
+            bool lastShadowsKeywordState = false;
+            bool lastSoftShadowsKeywordState = false;
             for (int soffset = m_stencilVisLightOffsets[(int)LightType.Point]; soffset < m_stencilVisLights.Length; ++soffset)
             {
                 ushort visLightIndex = m_stencilVisLights[soffset];
@@ -861,38 +933,32 @@ namespace UnityEngine.Rendering.Universal.Internal
                     new Vector4(posWS.x, posWS.y, posWS.z, 1.0f)
                 );
 
-                Vector4 lightPos, lightColor, lightAttenuation, lightSpotDir, lightOcclusionChannel;
-                UniversalRenderPipeline.InitializeLightConstants_Common(visibleLights, visLightIndex, out lightPos, out lightColor, out lightAttenuation, out lightSpotDir, out lightOcclusionChannel);
+                Vector4 lightPos, lightColor, lightAttenuation, lightOcclusionChannel;
+                UniversalRenderPipeline.InitializeLightConstants_Common(visibleLights, visLightIndex, out lightPos, out lightColor, out lightAttenuation, out _, out lightOcclusionChannel);
 
-                var additionalLightData = light.GetUniversalAdditionalLightData();
-                uint lightLayerMask = RenderingLayerUtils.ToValidRenderingLayers(additionalLightData.renderingLayers);
+                if (lightData.supportsLightLayers)
+                    SetRenderingLayersMask(cmd, light, ShaderConstants._LightLayerMask);
 
                 int lightFlags = 0;
                 if (light.bakingOutput.lightmapBakeType == LightmapBakeType.Mixed)
                     lightFlags |= (int)LightFlag.SubtractiveMixedLighting;
 
-                int shadowLightIndex = m_AdditionalLightsShadowCasterPass != null ? m_AdditionalLightsShadowCasterPass.GetShadowLightIndexFromLightIndex(visLightIndex) : -1;
-                bool hasDeferredLightShadows = light && light.shadows != LightShadows.None && shadowLightIndex >= 0;
-                SetAdditionalLightsShadowsKeyword(ref cmd, ref renderingData, hasDeferredLightShadows);
+                // Determine whether the light is casting shadows and what the index it should use.
+                int shadowLightIndex = hasAdditionalLightPass ? m_AdditionalLightsShadowCasterPass.GetShadowLightIndexFromLightIndex(visLightIndex) : -1;
+                bool hasDeferredShadows = light && light.shadows != LightShadows.None && shadowLightIndex >= 0;
 
-                bool hasSoftShadow = hasDeferredLightShadows && renderingData.shadowData.supportsSoftShadows && light.shadows == LightShadows.Soft;
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.SoftShadows, hasSoftShadow);
+                // Update keywords states
+                SetAdditionalLightsShadowsKeyword(ref cmd, stripShadowsOffVariants, shadowData.additionalLightShadowsEnabled, hasDeferredShadows, isFirstLight, ref lastShadowsKeywordState);
+                SetSoftShadowsKeyword(cmd, shadowData, light, hasDeferredShadows, isFirstLight, ref lastSoftShadowsKeywordState);
+                SetLightCookiesKeyword(cmd, visLightIndex, hasLightCookieManager, isFirstLight, ref lastLightCookieKeywordState, ref lastLightCookieIndex);
 
-                if (m_LightCookieManager != null)
-                {
-                    int cookieLightIndex = m_LightCookieManager.GetLightCookieShaderDataIndex(visLightIndex);
-                    // We could test this in shader (static if) a variant (shader change) is undesirable. Same for spot light.
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.LightCookies, cookieLightIndex >= 0);
-                    cmd.SetGlobalInt(ShaderConstants._CookieLightIndex, cookieLightIndex);
-                }
-
+                // Update Global properties
                 cmd.SetGlobalVector(ShaderConstants._LightPosWS, lightPos);
                 cmd.SetGlobalVector(ShaderConstants._LightColor, lightColor);
                 cmd.SetGlobalVector(ShaderConstants._LightAttenuation, lightAttenuation);
                 cmd.SetGlobalVector(ShaderConstants._LightOcclusionProbInfo, lightOcclusionChannel);
                 cmd.SetGlobalInt(ShaderConstants._LightFlags, lightFlags);
                 cmd.SetGlobalInt(ShaderConstants._ShadowLightIndex, shadowLightIndex);
-                cmd.SetGlobalInt(ShaderConstants._LightLayerMask, (int)lightLayerMask);
 
                 // Stencil pass.
                 cmd.DrawMesh(m_SphereMesh, transformMatrix, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.StencilVolume]);
@@ -900,20 +966,29 @@ namespace UnityEngine.Rendering.Universal.Internal
                 // Lighting pass.
                 cmd.DrawMesh(m_SphereMesh, transformMatrix, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.PunctualLit]);
                 cmd.DrawMesh(m_SphereMesh, transformMatrix, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.PunctualSimpleLit]);
+
+                isFirstLight = false;
             }
 
-            cmd.DisableShaderKeyword(ShaderKeywordStrings._POINT);
+            cmd.SetKeyword(ShaderGlobalKeywords._POINT, false);
         }
 
-        void RenderStencilSpotLights(CommandBuffer cmd, ref RenderingData renderingData, NativeArray<VisibleLight> visibleLights)
+        void RenderStencilSpotLights(RasterCommandBuffer cmd, bool stripShadowsOffVariants, UniversalLightData lightData, UniversalShadowData shadowData, NativeArray<VisibleLight> visibleLights, bool hasAdditionalLightPass, bool hasLightCookieManager)
         {
             if (m_HemisphereMesh == null)
                 m_HemisphereMesh = CreateHemisphereMesh();
 
-            cmd.EnableShaderKeyword(ShaderKeywordStrings._SPOT);
+            cmd.SetKeyword(ShaderGlobalKeywords._SPOT, true);
+
+            int lastLightCookieIndex = -1;
+            bool isFirstLight = true;
+            bool lastLightCookieKeywordState = false;
+            bool lastShadowsKeywordState = false;
+            bool lastSoftShadowsKeywordState = false;
             for (int soffset = m_stencilVisLightOffsets[(int)LightType.Spot]; soffset < m_stencilVisLights.Length; ++soffset)
             {
                 ushort visLightIndex = m_stencilVisLights[soffset];
+
                 ref VisibleLight vl = ref visibleLights.UnsafeElementAtMutable(visLightIndex);
                 if (vl.lightType != LightType.Spot)
                     break;
@@ -928,30 +1003,25 @@ namespace UnityEngine.Rendering.Universal.Internal
                 // The tighter the spot shape, the lesser inflation is needed.
                 float guard = Mathf.Lerp(1.0f, kStencilShapeGuard, sinAlpha);
 
-                Vector4 lightPos, lightColor, lightAttenuation, lightSpotDir, lightOcclusionChannel;
-                UniversalRenderPipeline.InitializeLightConstants_Common(visibleLights, visLightIndex, out lightPos, out lightColor, out lightAttenuation, out lightSpotDir, out lightOcclusionChannel);
+                UniversalRenderPipeline.InitializeLightConstants_Common(visibleLights, visLightIndex, out Vector4 lightPos, out Vector4 lightColor, out Vector4 lightAttenuation, out Vector4 lightSpotDir, out Vector4 lightOcclusionChannel);
 
-                var additionalLightData = light.GetUniversalAdditionalLightData();
-                uint lightLayerMask = RenderingLayerUtils.ToValidRenderingLayers(additionalLightData.renderingLayers);
+                if (lightData.supportsLightLayers)
+                    SetRenderingLayersMask(cmd, light, ShaderConstants._LightLayerMask);
 
                 int lightFlags = 0;
                 if (light.bakingOutput.lightmapBakeType == LightmapBakeType.Mixed)
                     lightFlags |= (int)LightFlag.SubtractiveMixedLighting;
 
-                int shadowLightIndex = m_AdditionalLightsShadowCasterPass != null ? m_AdditionalLightsShadowCasterPass.GetShadowLightIndexFromLightIndex(visLightIndex) : -1;
-                bool hasDeferredLightShadows = light && light.shadows != LightShadows.None && shadowLightIndex >= 0;
-                SetAdditionalLightsShadowsKeyword(ref cmd, ref renderingData, hasDeferredLightShadows);
+                // Determine whether the light is casting shadows and what the index it should use.
+                int shadowLightIndex = hasAdditionalLightPass ? m_AdditionalLightsShadowCasterPass.GetShadowLightIndexFromLightIndex(visLightIndex) : -1;
+                bool hasDeferredShadows = light && light.shadows != LightShadows.None && shadowLightIndex >= 0;
 
-                bool hasSoftShadow = hasDeferredLightShadows && renderingData.shadowData.supportsSoftShadows && light.shadows == LightShadows.Soft;
-                CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.SoftShadows, hasSoftShadow);
+                // Update keywords states
+                SetAdditionalLightsShadowsKeyword(ref cmd, stripShadowsOffVariants, shadowData.additionalLightShadowsEnabled, hasDeferredShadows, isFirstLight, ref lastShadowsKeywordState);
+                SetSoftShadowsKeyword(cmd, shadowData, light, hasDeferredShadows, isFirstLight, ref lastSoftShadowsKeywordState);
+                SetLightCookiesKeyword(cmd, visLightIndex, hasLightCookieManager, isFirstLight, ref lastLightCookieKeywordState, ref lastLightCookieIndex);
 
-                if (m_LightCookieManager != null)
-                {
-                    int cookieLightIndex = m_LightCookieManager.GetLightCookieShaderDataIndex(visLightIndex);
-                    CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.LightCookies, cookieLightIndex >= 0);
-                    cmd.SetGlobalInt(ShaderConstants._CookieLightIndex, cookieLightIndex);
-                }
-
+                // Update Global properties
                 cmd.SetGlobalVector(ShaderConstants._SpotLightScale, new Vector4(sinAlpha, sinAlpha, 1.0f - cosAlpha, vl.range));
                 cmd.SetGlobalVector(ShaderConstants._SpotLightBias, new Vector4(0.0f, 0.0f, cosAlpha, 0.0f));
                 cmd.SetGlobalVector(ShaderConstants._SpotLightGuard, new Vector4(guard, guard, guard, cosAlpha * vl.range));
@@ -962,7 +1032,6 @@ namespace UnityEngine.Rendering.Universal.Internal
                 cmd.SetGlobalVector(ShaderConstants._LightOcclusionProbInfo, lightOcclusionChannel);
                 cmd.SetGlobalInt(ShaderConstants._LightFlags, lightFlags);
                 cmd.SetGlobalInt(ShaderConstants._ShadowLightIndex, shadowLightIndex);
-                cmd.SetGlobalInt(ShaderConstants._LightLayerMask, (int)lightLayerMask);
 
                 // Stencil pass.
                 cmd.DrawMesh(m_HemisphereMesh, vl.localToWorldMatrix, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.StencilVolume]);
@@ -970,12 +1039,13 @@ namespace UnityEngine.Rendering.Universal.Internal
                 // Lighting pass.
                 cmd.DrawMesh(m_HemisphereMesh, vl.localToWorldMatrix, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.PunctualLit]);
                 cmd.DrawMesh(m_HemisphereMesh, vl.localToWorldMatrix, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.PunctualSimpleLit]);
-            }
 
-            cmd.DisableShaderKeyword(ShaderKeywordStrings._SPOT);
+                isFirstLight = false;
+            }
+            cmd.SetKeyword(ShaderGlobalKeywords._SPOT, false);
         }
 
-        void RenderSSAOBeforeShading(CommandBuffer cmd, ref RenderingData renderingData)
+        void RenderSSAOBeforeShading(RasterCommandBuffer cmd)
         {
             if (m_FullscreenMesh == null)
                 m_FullscreenMesh = CreateFullscreenMesh();
@@ -983,11 +1053,17 @@ namespace UnityEngine.Rendering.Universal.Internal
             cmd.DrawMesh(m_FullscreenMesh, Matrix4x4.identity, m_StencilDeferredMaterial, 0, m_StencilDeferredPasses[(int)StencilDeferredPasses.SSAOOnly]);
         }
 
-        void RenderFog(ScriptableRenderContext context, CommandBuffer cmd, ref RenderingData renderingData)
+        void RenderFog(RasterCommandBuffer cmd, bool isOrthographic)
         {
             // Legacy fog does not work in orthographic mode.
-            if (!RenderSettings.fog || renderingData.cameraData.camera.orthographic)
+            if (!RenderSettings.fog || isOrthographic)
                 return;
+
+            if (m_StencilDeferredPasses[(int)StencilDeferredPasses.Fog] < 0)
+            {
+                Debug.LogError("Missing Deferred Fog Pass. The fog render pass will not execute. Project Settings > Graphics > Shader Stripping > Fog Modes.");
+                return;
+            }
 
             if (m_FullscreenMesh == null)
                 m_FullscreenMesh = CreateFullscreenMesh();
@@ -1161,6 +1237,70 @@ namespace UnityEngine.Rendering.Universal.Internal
             mesh.triangles = indices;
 
             return mesh;
+        }
+
+        // Sets the correct value for _MainLightLayerMask/_LightLayerMask
+        private void SetRenderingLayersMask(RasterCommandBuffer cmd, Light light, int shaderPropertyID)
+        {
+            var additionalLightData = light.GetUniversalAdditionalLightData();
+            uint lightLayerMask = RenderingLayerUtils.ToValidRenderingLayers(additionalLightData.renderingLayers);
+            cmd.SetGlobalInt(shaderPropertyID, (int)lightLayerMask);
+        }
+
+        // Enable/Disable the _ADDITIONAL_LIGHT_SHADOWS keyword if it has changed...
+        private void SetAdditionalLightsShadowsKeyword(ref RasterCommandBuffer cmd, bool stripShadowsOffVariants, bool additionalLightShadowsEnabled, bool hasDeferredShadows, bool shouldOverride, ref bool lastShadowsKeyword)
+        {
+            bool additionalLightShadowsEnabledInAsset = additionalLightShadowsEnabled;
+            bool hasOffVariant = !stripShadowsOffVariants;
+
+            // AdditionalLightShadows Keyword is enabled when:
+            // Shadows are enabled in Asset and
+            // a) the OFF variant has been stripped
+            // b) light is casting a shadow
+            bool shouldEnable = additionalLightShadowsEnabledInAsset && (!hasOffVariant || hasDeferredShadows);
+
+            // Return if the state hasn't changed...
+            if (!shouldOverride && lastShadowsKeyword == shouldEnable)
+                return;
+
+            // Update the keyword state
+            lastShadowsKeyword = shouldEnable;
+            cmd.SetKeyword(ShaderGlobalKeywords.AdditionalLightShadows, shouldEnable);
+        }
+
+        // Enable/Disable the _SHADOWS_SOFT keyword if it has changed...
+        private void SetSoftShadowsKeyword(RasterCommandBuffer cmd, UniversalShadowData shadowData, Light light, bool hasDeferredShadows, bool shouldOverride, ref bool lastHasSoftShadow)
+        {
+            bool hasSoftShadow = hasDeferredShadows && shadowData.supportsSoftShadows && light.shadows == LightShadows.Soft;
+
+            // Return if the state hasn't changed...
+            if (!shouldOverride && lastHasSoftShadow == hasSoftShadow)
+                return;
+
+            // Update the keyword state
+            lastHasSoftShadow = hasSoftShadow;
+            ShadowUtils.SetPerLightSoftShadowKeyword(cmd, hasSoftShadow);
+        }
+
+        // Enable/Disable the _LIGHT_COOKIES keyword if it has changed and the light cookie index
+        private void SetLightCookiesKeyword(RasterCommandBuffer cmd, int visLightIndex, bool hasLightCookieManager, bool shouldOverride, ref bool lastLightCookieState, ref int lastCookieLightIndex)
+        {
+            if (!hasLightCookieManager)
+                return;
+
+            int cookieLightIndex = m_LightCookieManager.GetLightCookieShaderDataIndex(visLightIndex);
+            bool newState = cookieLightIndex >= 0;
+            if (shouldOverride || newState != lastLightCookieState)
+            {
+                lastLightCookieState = newState;
+                cmd.SetKeyword(ShaderGlobalKeywords.LightCookies, newState);
+            }
+
+            if (shouldOverride || cookieLightIndex != lastCookieLightIndex)
+            {
+                lastCookieLightIndex = cookieLightIndex;
+                cmd.SetGlobalInt(ShaderConstants._CookieLightIndex, cookieLightIndex);
+            }
         }
     }
 

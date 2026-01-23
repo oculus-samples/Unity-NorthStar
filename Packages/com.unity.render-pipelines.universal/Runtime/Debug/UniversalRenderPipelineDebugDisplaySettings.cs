@@ -10,30 +10,34 @@ namespace UnityEngine.Rendering.Universal
         DebugDisplaySettingsCommon commonSettings { get; set; }
 
         /// <summary>
-        /// Material-related Rendering Debugger settings.
+        /// Material-related rendering debugger settings.
         /// </summary>
         public DebugDisplaySettingsMaterial materialSettings { get; private set; }
 
         /// <summary>
-        /// Rendering-related Rendering Debugger settings.
+        /// Rendering-related rendering debugger settings.
         /// </summary>
         public DebugDisplaySettingsRendering renderingSettings { get; private set; }
 
         /// <summary>
-        /// Lighting-related Rendering Debugger settings.
+        /// Lighting-related rendering debugger settings.
         /// </summary>
         public DebugDisplaySettingsLighting lightingSettings { get; private set; }
 
         /// <summary>
-        /// Volume-related Rendering Debugger settings.
+        /// Volume-related rendering debugger settings.
         /// </summary>
         public DebugDisplaySettingsVolume volumeSettings { get; private set; }
 
         /// <summary>
         /// Display stats.
         /// </summary>
-        internal DebugDisplayStats displayStats { get; private set; }
+        internal DebugDisplaySettingsStats<URPProfileId> displayStats { get; private set; }
 
+        /// <summary>
+        /// GPU Resident Drawer Rendering Debugger settings and statistics.
+        /// </summary>
+        internal DebugDisplayGPUResidentDrawer gpuResidentDrawerSettings { get; private set; }
 
         #region IDebugDisplaySettingsQuery
 
@@ -89,18 +93,35 @@ namespace UnityEngine.Rendering.Universal
         {
             base.Reset();
 
-            displayStats = Add(new DebugDisplayStats());
+            displayStats = Add(new DebugDisplaySettingsStats<URPProfileId>(new UniversalRenderPipelineDebugDisplayStats()));
             materialSettings = Add(new DebugDisplaySettingsMaterial());
             lightingSettings = Add(new DebugDisplaySettingsLighting());
             renderingSettings = Add(new DebugDisplaySettingsRendering());
             volumeSettings = Add(new DebugDisplaySettingsVolume(new UniversalRenderPipelineVolumeDebugSettings()));
             commonSettings = Add(new DebugDisplaySettingsCommon());
+            gpuResidentDrawerSettings = Add(new DebugDisplayGPUResidentDrawer());
+
+            // This is not a debug property owned by any `IDebugDisplaySettingsData`, it is a static property on `Texture`.
+            // When the user hits reset, we want to make sure texture mip caching is enabled again (regardless of whether the
+            // user toggled this in the Rendering Debugger UI or changed it using the scripting API).
+            Texture.streamingTextureDiscardUnusedMips = false;
         }
 
-        internal void UpdateFrameTiming()
+        internal void UpdateDisplayStats()
         {
             if (displayStats != null)
-                displayStats.UpdateFrameTiming();
+                displayStats.debugDisplayStats.Update();
+        }
+
+        internal void UpdateMaterials()
+        {
+            if (renderingSettings.mipInfoMode != DebugMipInfoMode.None)
+            {
+                int textureSlotImpl = (renderingSettings.canAggregateData && renderingSettings.showInfoForAllSlots)
+                    ? -1
+                    : renderingSettings.mipDebugMaterialTextureSlot;
+                Texture.SetStreamingTextureMaterialDebugProperties(textureSlotImpl);
+            }
         }
     }
 }

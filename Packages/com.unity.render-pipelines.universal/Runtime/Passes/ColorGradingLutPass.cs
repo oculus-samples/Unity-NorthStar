@@ -1,5 +1,6 @@
+using System;
 using UnityEngine.Experimental.Rendering;
-using UnityEngine.Experimental.Rendering.RenderGraphModule;
+using UnityEngine.Rendering.RenderGraphModule;
 
 namespace UnityEngine.Rendering.Universal.Internal
 {
@@ -28,7 +29,7 @@ namespace UnityEngine.Rendering.Universal.Internal
         /// <seealso cref="PostProcessData"/>
         public ColorGradingLutPass(RenderPassEvent evt, PostProcessData data)
         {
-            base.profilingSampler = new ProfilingSampler(nameof(ColorGradingLutPass));
+            profilingSampler = new ProfilingSampler("Blit Color LUT");
             renderPassEvent = evt;
             overrideCameraTarget = true;
 
@@ -36,7 +37,7 @@ namespace UnityEngine.Rendering.Universal.Internal
             {
                 if (shader == null)
                 {
-                    Debug.LogError($"Missing shader. {GetType().DeclaringType.Name} render pass will not execute. Check for missing reference in the renderer resources.");
+                    Debug.LogError($"Missing shader. ColorGradingLutPass render pass will not execute. Check for missing reference in the renderer resources.");
                     return null;
                 }
 
@@ -47,7 +48,9 @@ namespace UnityEngine.Rendering.Universal.Internal
             m_LutBuilderHdr = Load(data.shaders.lutBuilderHdrPS);
 
             // Warm up lut format as IsFormatSupported adds GC pressure...
-            const FormatUsage kFlags = FormatUsage.Linear | FormatUsage.Render;
+            // UUM-41070: We require `Linear | Render` but with the deprecated FormatUsage this was checking `Blend`
+            // For now, we keep checking for `Blend` until the performance hit of doing the correct checks is evaluated
+            const GraphicsFormatUsage kFlags = GraphicsFormatUsage.Blend;
             if (SystemInfo.IsFormatSupported(GraphicsFormat.R16G16B16A16_SFloat, kFlags))
                 m_HdrLutFormat = GraphicsFormat.R16G16B16A16_SFloat;
             else if (SystemInfo.IsFormatSupported(GraphicsFormat.B10G11R11_UFloatPack32, kFlags))
@@ -83,10 +86,21 @@ namespace UnityEngine.Rendering.Universal.Internal
         /// <summary>
         /// Get a descriptor and filter mode for the required texture for this pass
         /// </summary>
-        /// <param name="postProcessingData"></param>
-        /// <param name="descriptor"></param>
-        /// <param name="filterMode"></param>
+        /// <param name="postProcessingData">The pass will use settings from <c>PostProcessingData</c> for the pass.</param>
+        /// <param name="descriptor">The <c>RenderTextureDescriptor</c> used by the pass.</param>
+        /// <param name="filterMode">The <c>FilterMode</c> used by the pass.</param>
         public void ConfigureDescriptor(in PostProcessingData postProcessingData, out RenderTextureDescriptor descriptor, out FilterMode filterMode)
+        {
+            ConfigureDescriptor(postProcessingData.universalPostProcessingData, out descriptor, out filterMode);
+        }
+
+        /// <summary>
+        /// Get a descriptor and filter mode for the required texture for this pass
+        /// </summary>
+        /// <param name="postProcessingData">The pass will use settings from <c>PostProcessingData</c> for the pass.</param>
+        /// <param name="descriptor">The <c>RenderTextureDescriptor</c> used by the pass.</param>
+        /// <param name="filterMode">The <c>FilterMode</c> used by the pass.</param>
+        public void ConfigureDescriptor(in UniversalPostProcessingData postProcessingData, out RenderTextureDescriptor descriptor, out FilterMode filterMode)
         {
             bool hdr = postProcessingData.gradingMode == ColorGradingMode.HighDynamicRange;
             int lutHeight = postProcessingData.lutSize;
@@ -99,28 +113,42 @@ namespace UnityEngine.Rendering.Universal.Internal
         }
 
         /// <inheritdoc/>
+        [Obsolete(DeprecationMessage.CompatibilityScriptingAPIObsolete, false)]
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
+            ContextContainer frameData = renderingData.frameData;
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            UniversalPostProcessingData postProcessingData = frameData.Get<UniversalPostProcessingData>();
+
+            m_PassData.cameraData = cameraData;
+            m_PassData.postProcessingData = postProcessingData;
+
             m_PassData.lutBuilderLdr = m_LutBuilderLdr;
             m_PassData.lutBuilderHdr = m_LutBuilderHdr;
             m_PassData.allowColorGradingACESHDR = m_AllowColorGradingACESHDR;
 
+#if ENABLE_VR && ENABLE_XR_MODULE
+            if (renderingData.cameraData.xr.supportsFoveatedRendering)
+                renderingData.commandBuffer.SetFoveatedRenderingMode(FoveatedRenderingMode.Disabled);
+#endif
+
             CoreUtils.SetRenderTarget(renderingData.commandBuffer, m_InternalLut, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, ClearFlag.None, Color.clear);
-            ExecutePass(context, m_PassData, ref renderingData, m_InternalLut);
+            ExecutePass(CommandBufferHelpers.GetRasterCommandBuffer(renderingData.commandBuffer), m_PassData, m_InternalLut);
         }
 
         private class PassData
         {
-            internal RenderingData renderingData;
+            internal UniversalCameraData cameraData;
+            internal UniversalPostProcessingData postProcessingData;
+
             internal Material lutBuilderLdr;
             internal Material lutBuilderHdr;
             internal bool allowColorGradingACESHDR;
             internal TextureHandle internalLut;
         }
 
-        private static void ExecutePass(ScriptableRenderContext context, PassData passData, ref RenderingData renderingData, RTHandle internalLutTarget)
+        private static void ExecutePass(RasterCommandBuffer cmd, PassData passData, RTHandle internalLutTarget)
         {
-            var cmd = renderingData.commandBuffer;
             var lutBuilderLdr = passData.lutBuilderLdr;
             var lutBuilderHdr = passData.lutBuilderHdr;
             var allowColorGradingACESHDR = passData.allowColorGradingACESHDR;
@@ -138,8 +166,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                 var tonemapping = stack.GetComponent<Tonemapping>();
                 var whiteBalance = stack.GetComponent<WhiteBalance>();
 
-                ref var postProcessingData = ref renderingData.postProcessingData;
-                bool hdr = postProcessingData.gradingMode == ColorGradingMode.HighDynamicRange;
+                bool hdr = passData.postProcessingData.gradingMode == ColorGradingMode.HighDynamicRange;
 
                 // Prepare texture & material
                 var material = hdr ? lutBuilderHdr : lutBuilderLdr;
@@ -176,7 +203,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                     splitToning.balance.value
                 );
 
-                int lutHeight = postProcessingData.lutSize;
+                int lutHeight = passData.postProcessingData.lutSize;
                 int lutWidth = lutHeight * lutHeight;
                 var lutParameters = new Vector4(lutHeight, 0.5f / lutWidth, 0.5f / lutHeight,
                     lutHeight / (lutHeight - 1f));
@@ -224,52 +251,55 @@ namespace UnityEngine.Rendering.Universal.Internal
                     }
 
                     // HDR output is active
-                    if (renderingData.cameraData.isHDROutputActive)
+                    if (passData.cameraData.isHDROutputActive)
                     {
                         Vector4 hdrOutputLuminanceParams;
                         Vector4 hdrOutputGradingParams;
-                        UniversalRenderPipeline.GetHDROutputLuminanceParameters(tonemapping, out hdrOutputLuminanceParams);
+
+                        UniversalRenderPipeline.GetHDROutputLuminanceParameters(passData.cameraData.hdrDisplayInformation, passData.cameraData.hdrDisplayColorGamut, tonemapping, out hdrOutputLuminanceParams);
                         UniversalRenderPipeline.GetHDROutputGradingParameters(tonemapping, out hdrOutputGradingParams);
 
                         material.SetVector(ShaderPropertyId.hdrOutputLuminanceParams, hdrOutputLuminanceParams);
                         material.SetVector(ShaderPropertyId.hdrOutputGradingParams, hdrOutputGradingParams);
 
-                        HDROutputUtils.ConfigureHDROutput(material, HDROutputSettings.main.displayColorGamut, HDROutputUtils.Operation.ColorConversion);
+                        HDROutputUtils.ConfigureHDROutput(material, passData.cameraData.hdrDisplayColorGamut, HDROutputUtils.Operation.ColorConversion);
                     }
                 }
 
-                renderingData.cameraData.xr.StopSinglePass(cmd);
+                passData.cameraData.xr.StopSinglePass(cmd);
 
+                // Render the lut.
+                Blitter.BlitTexture(cmd, internalLutTarget, Vector2.one, material, 0);
 
-                if (renderingData.cameraData.xr.supportsFoveatedRendering)
-                    cmd.SetFoveatedRenderingMode(FoveatedRenderingMode.Disabled);
-
-                // Render the lut
-                Blitter.BlitCameraTexture(cmd, internalLutTarget, internalLutTarget, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, material, 0);
-
-                renderingData.cameraData.xr.StartSinglePass(cmd);
+                passData.cameraData.xr.StartSinglePass(cmd);
             }
         }
 
-        internal void Render(RenderGraph renderGraph, out TextureHandle internalColorLut, ref RenderingData renderingData)
+        internal void Render(RenderGraph renderGraph, ContextContainer frameData, out TextureHandle internalColorLut)
         {
-            using (var builder = renderGraph.AddRenderPass<PassData>("Color Lut Pass", out var passData, base.profilingSampler))
-            {
-                this.ConfigureDescriptor(in renderingData.postProcessingData, out var lutDesc, out var filterMode);
-                internalColorLut = UniversalRenderer.CreateRenderGraphTexture(renderGraph, lutDesc, "_InternalGradingLut", true);
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+            UniversalPostProcessingData postProcessingData= frameData.Get<UniversalPostProcessingData>();
 
-                passData.internalLut = builder.UseColorBuffer(internalColorLut, 0);
+            using (var builder = renderGraph.AddRasterRenderPass<PassData>(passName, out var passData, profilingSampler))
+            {
+                this.ConfigureDescriptor(in postProcessingData, out var lutDesc, out var filterMode);
+                internalColorLut = UniversalRenderer.CreateRenderGraphTexture(renderGraph, lutDesc, "_InternalGradingLut", true, filterMode);
+
+                passData.cameraData = cameraData;
+                passData.postProcessingData = postProcessingData;
+
+                passData.internalLut = internalColorLut;
+                builder.SetRenderAttachment(internalColorLut, 0, AccessFlags.WriteAll);
                 passData.lutBuilderLdr = m_LutBuilderLdr;
                 passData.lutBuilderHdr = m_LutBuilderHdr;
-                passData.renderingData = renderingData;
                 passData.allowColorGradingACESHDR = m_AllowColorGradingACESHDR;
 
                 //  TODO RENDERGRAPH: culling? force culling off for testing
                 builder.AllowPassCulling(false);
 
-                builder.SetRenderFunc((PassData data, RenderGraphContext context) =>
+                builder.SetRenderFunc((PassData data, RasterGraphContext context) =>
                 {
-                    ExecutePass(context.renderContext, data, ref data.renderingData, data.internalLut);
+                    ExecutePass(context.cmd, data, data.internalLut);
                 });
 
                 return;

@@ -51,13 +51,17 @@ namespace UnityEditor.Rendering.Universal
         {
             get
             {
+                return renderer2DData?.lightCullResult;
+            }
+        }
+
+        Renderer2DData renderer2DData
+        {
+            get
+            {
                 // Game view main camera
                 var renderer = Camera.main?.GetUniversalAdditionalCameraData().scriptableRenderer as Renderer2D;
-                var data = renderer?.GetRenderer2DData();
-                if (data != null && data.lightCullResult.IsGameView())
-                    return data?.lightCullResult;
-
-                return null;
+                return renderer?.GetRenderer2DData();
             }
         }
 
@@ -69,7 +73,7 @@ namespace UnityEditor.Rendering.Universal
             batchList.Clear();
 
             var layers = Light2DManager.GetCachedSortingLayer();
-            var batches = LayerUtility.CalculateBatches(lightCullResult, out var batchCount);
+            var batches = LayerUtility.CalculateBatches(renderer2DData, out var batchCount);
 
             for (var i = 0; i < batchCount; i++)
             {
@@ -158,7 +162,7 @@ namespace UnityEditor.Rendering.Universal
 
             foreach (var obj in batch1.Lights)
             {
-                if(obj != null)
+                if (obj != null)
                     lightBubble1.Add(MakePill(obj));
             }
 
@@ -237,7 +241,7 @@ namespace UnityEditor.Rendering.Universal
             lightBubble1.Clear();
             foreach (var obj in lightSet1)
             {
-                if(obj != null)
+                if (obj != null)
                     lightBubble1.Add(MakePill(obj));
             }
 
@@ -251,7 +255,7 @@ namespace UnityEditor.Rendering.Universal
             lightBubble2.Clear();
             foreach (var obj in lightSet2)
             {
-                if(obj != null)
+                if (obj != null)
                     lightBubble2.Add(MakePill(obj));
             }
 
@@ -387,7 +391,7 @@ namespace UnityEditor.Rendering.Universal
                     var firstIndex = batchListView.selectedIndices.First();
                     var secondIndex = batchListView.selectedIndices.Last();
 
-                    if(secondIndex > firstIndex + 1 || secondIndex < firstIndex - 1)
+                    if (secondIndex > firstIndex + 1 || secondIndex < firstIndex - 1)
                     {
                         // Clamp since we do adjacent batch comparisons
                         secondIndex = Mathf.Clamp(secondIndex, firstIndex - 1, firstIndex + 1);
@@ -404,7 +408,7 @@ namespace UnityEditor.Rendering.Universal
 
                 default:
                     // Account for multiple select either with shift or ctrl keys
-                    if(batchListView.selectedIndices.Count() > 2)
+                    if (batchListView.selectedIndices.Count() > 2)
                     {
                         if (selectedIndices.Count == 1)
                         {
@@ -453,6 +457,9 @@ namespace UnityEditor.Rendering.Universal
 
         private bool IsDirty()
         {
+            if (lightCullResult == null)
+                return false;
+
             bool isDirty = false;
 
             // Refresh if layers are added or removed
@@ -460,7 +467,7 @@ namespace UnityEditor.Rendering.Universal
             isDirty |= cachedSceneHandle != SceneManager.GetActiveScene().handle;
             isDirty |= cachedCamPos != Camera.main?.transform.position;
 
-            if (lightCullResult != null)
+            if (lightCullResult.IsGameView())
             {
                 isDirty |= totalLightCount != lightCullResult.visibleLights.Count();
                 isDirty |= totalShadowCount != lightCullResult.visibleShadows.Count();

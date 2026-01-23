@@ -113,7 +113,7 @@ namespace NorthStar
         {
             //todo, optioon to make this start velocity ramp up over a few frames rather than being instantaneous so it feels more natuaral
             var velocityToSet = (EndPosition - StartPosition).normalized * m_startSpeed;
-            m_barrelRigidBody.velocity = velocityToSet;
+            m_barrelRigidBody.linearVelocity = velocityToSet;
         }
 
         private void FixedUpdate()

@@ -25,45 +25,56 @@ namespace UnityEditor.Rendering.Universal
         {
             //Measurements
             public static float defaultLineSpace = EditorGUIUtility.singleLineHeight + EditorGUIUtility.standardVerticalSpacing;
+
+            public static readonly GUIContent alembicMotionVectors = EditorGUIUtility.TrTextContent("Alembic Motion Vectors",
+                "When enabled, the material will use motion vectors from the Alembic animation cache. Should not be used on regular meshes or Alembic caches without precomputed motion vectors.");
         }
 
         internal static void FeatureHelpBox(string message, MessageType type)
         {
             CoreEditorUtils.DrawFixMeBox(message, type, "Open", () =>
             {
-                Selection.activeObject = UniversalRenderPipeline.asset.scriptableRendererData;
+                EditorUtility.OpenPropertyEditor(UniversalRenderPipeline.asset.scriptableRendererData);
                 GUIUtility.ExitGUI();
+            });
+        }
+
+        internal static void QualitySettingsHelpBox(string message, MessageType type, UniversalRenderPipelineAssetUI.Expandable expandable, string propertyPath)
+        {
+            CoreEditorUtils.DrawFixMeBox(message, type, "Open", () =>
+            {
+                var currentPipeline = UniversalRenderPipeline.asset;
+
+                // Make sure we open a new window if the user has already selected Open
+                var windows = Resources.FindObjectsOfTypeAll<EditorWindow>();
+
+                if (windows.Length != 0)
+                {
+                    foreach (var window in windows)
+                    {
+                        if (currentPipeline.name.Equals(window.titleContent.text))
+                            window.Close();
+                    }
+                }
+
+                EditorUtility.OpenPropertyEditor(currentPipeline);
+                UniversalRenderPipelineAssetUI.Expand(expandable, true);
+
+                EditorApplication.delayCall += () =>
+                    EditorApplication.delayCall += () =>
+                        CoreEditorUtils.Highlight(currentPipeline.name, propertyPath, HighlightSearchMode.Identifier);
             });
         }
 
         internal static void DrawRenderingLayerMask(SerializedProperty property, GUIContent style)
         {
-            Rect controlRect = EditorGUILayout.GetControlRect(true);
-            int renderingLayer = property.intValue;
-
-            string[] renderingLayerMaskNames = UniversalRenderPipelineGlobalSettings.instance.renderingLayerMaskNames;
-            int maskCount = (int)Mathf.Log(renderingLayer, 2) + 1;
-            if (renderingLayerMaskNames.Length < maskCount && maskCount <= 32)
-            {
-                var newRenderingLayerMaskNames = new string[maskCount];
-                for (int i = 0; i < maskCount; ++i)
-                {
-                    newRenderingLayerMaskNames[i] = i < renderingLayerMaskNames.Length ? renderingLayerMaskNames[i] : $"Unused Layer {i}";
-                }
-                renderingLayerMaskNames = newRenderingLayerMaskNames;
-
-                EditorGUILayout.HelpBox($"One or more of the Rendering Layers is not defined in the Universal Global Settings asset.", MessageType.Warning);
-            }
-
-            EditorGUI.BeginProperty(controlRect, style, property);
+            var renderingLayer = property.uintValue;
 
             EditorGUI.BeginChangeCheck();
-            renderingLayer = EditorGUI.MaskField(controlRect, style, renderingLayer, renderingLayerMaskNames);
+            renderingLayer = EditorGUILayout.RenderingLayerMaskField(style, renderingLayer);
 
             if (EditorGUI.EndChangeCheck())
-                property.uintValue = (uint)renderingLayer;
-
-            EditorGUI.EndProperty();
+                property.uintValue = renderingLayer;
         }
     }
 }

@@ -78,7 +78,7 @@ namespace NorthStar.DebugUtilities
                     //If transform posesses a ridiged body, reset its values
                     if (m_rigidbodies[i] != null)
                     {
-                        m_rigidbodies[i].velocity = Vector3.zero;
+                        m_rigidbodies[i].linearVelocity = Vector3.zero;
                         m_rigidbodies[i].angularVelocity = Vector3.zero;
                         //m_rigidbodies[i].Sleep();
                     }

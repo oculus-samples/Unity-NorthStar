@@ -9,7 +9,7 @@ namespace UnityEngine.Rendering.Universal
     /// sprites would appear pixel perfect when the virtual camera becomes live.
     /// </summary>
     [AddComponentMenu("")] // Hide in menu
-    [MovedFrom("UnityEngine.Experimental.Rendering.Universal")]
+    [MovedFrom(true, "UnityEngine.Experimental.Rendering.Universal", "Unity.RenderPipelines.Universal.Runtime")]
     public class CinemachineUniversalPixelPerfect : MonoBehaviour
     {
         void OnEnable()

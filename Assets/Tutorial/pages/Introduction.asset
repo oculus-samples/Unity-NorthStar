@@ -95,7 +95,7 @@ MonoBehaviour:
     Development:\n- <a href=\"./Documentation/MetaSdk.md\">Meta SDK Use</a>.\n- <a
     href=\"./Documentation/BuildInstructions.md\">Build Instructions</a>.\n\n\n#
     Dependencies\n\nThis project uses the following plugins and software:\n\n- <a
-    href=\"https://unity.com/download\">Unity</a> 2022.3.34f1 or newer.\n- <a href=\"https://developers.meta.com/horizon/downloads/package/unity-integration/\">Meta
+    href=\"https://unity.com/download\">Unity</a> 6000.0.59f2 or newer.\n- <a href=\"https://developers.meta.com/horizon/downloads/package/unity-integration/\">Meta
     Core XR SDK</a>.\n- <a href=\"https://github.com/oculus-samples/Unity-Movement\">Meta
     Movement SDK</a>.\n- <a href=\"https://developers.meta.com/horizon/documentation/unity/unity-isdk-interaction-sdk-overview/\">Meta
     Interaction SDK</a>.\n- <a href=\"https://developers.meta.com/horizon/documentation/unity/meta-xr-audio-sdk-unity-intro\">Meta
@@ -105,5 +105,6 @@ MonoBehaviour:
     <a href=\"https://github.com/naelstrof/UnityJigglePhysics#upm\">UnityJigglePhysics</a>.\n-
     <a href=\"https://github.com/vvrvvd/Unity-Spline-Editor#upm\">Unity Spline Editor</a>.\n\nTo
     test this project within Unity, you need:\n\n- <a href=\"https://www.meta.com/quest/setup/\">The
-    Meta Quest App</a>.\n\n"
+    Meta Quest App</a>.\n\n\n# Changelog\n\nSee <a href=\"./CHANGELOG.md\">CHANGELOG</a>
+    for a list of changes.\n"
   m_overrideMarkdownRoot: ./
